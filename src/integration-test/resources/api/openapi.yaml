@@ -7,7 +7,7 @@ info:
     url: https://opensource.org/licenses/MIT
   version: "1.0"
 servers:
-- url: http://localhost:51130
+- url: http://localhost:52803
   description: Generated server url
 tags:
 - name: Storage
@@ -52,6 +52,11 @@ paths:
               style: simple
               schema:
                 type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
         "304":
           description: Not modified
         "404":
@@ -331,10 +336,10 @@ components:
             $ref: "#/components/schemas/Violation"
         title:
           type: string
-        detail:
-          type: string
         causeAsProblem:
           $ref: "#/components/schemas/ThrowableProblem"
+        detail:
+          type: string
         instance:
           type: string
           format: uri

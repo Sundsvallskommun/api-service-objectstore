@@ -137,11 +137,20 @@ class StorageResource {
 		return ok(storageService.list(bucket, continuationToken, maxKeys));
 	}
 
-	@GetMapping(path = OBJECT_PATH, produces = APPLICATION_OCTET_STREAM_VALUE)
+	/**
+	 * Any media type is producible, because the content type of a read is whatever the object was stored with rather than
+	 * anything the mapping can know in advance. Naming one here would answer a client that asks for the very type its
+	 * object happens to be with a 406. The body is described on the response instead, since the handler writes to the
+	 * response itself and so has no return type for the specification to be derived from.
+	 */
+	@GetMapping(path = OBJECT_PATH, produces = ALL_VALUE)
 	@Operation(summary = "Read an object",
 		description = "The content is returned as the raw response body. A request whose If-None-Match matches the ETag of the object is answered with a bare 304.",
 		responses = {
-			@ApiResponse(responseCode = "200", description = "Successful operation", headers = @Header(name = ETAG, schema = @Schema(type = "string")), useReturnTypeSchema = true),
+			@ApiResponse(responseCode = "200",
+				description = "Successful operation",
+				headers = @Header(name = ETAG, schema = @Schema(type = "string")),
+				content = @Content(mediaType = APPLICATION_OCTET_STREAM_VALUE, schema = @Schema(type = "string", format = "binary"))),
 			@ApiResponse(responseCode = "304", description = "Not modified"),
 			@ApiResponse(responseCode = "404", description = "Not found", content = @Content(mediaType = APPLICATION_PROBLEM_JSON_VALUE, schema = @Schema(implementation = Problem.class)))
 		})
