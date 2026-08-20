@@ -2,6 +2,7 @@ package se.sundsvall.objectstore.integration.db;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
+import java.time.OffsetDateTime;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -11,7 +12,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import se.sundsvall.objectstore.integration.db.model.StoredFileEntity;
 
-import static java.time.OffsetDateTime.now;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -25,6 +25,7 @@ class StoredFileRepositoryImplTest {
 
 	private static final String BUCKET = "attachments";
 	private static final String ID = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b";
+	private static final OffsetDateTime TIMESTAMP = OffsetDateTime.parse("2026-08-20T12:00:00Z");
 
 	@Mock
 	private EntityManager entityManagerMock;
@@ -46,7 +47,7 @@ class StoredFileRepositoryImplTest {
 	void createExclusively() {
 		// Arrange
 		final var entity = entity();
-		final var timestamp = now();
+		final var timestamp = TIMESTAMP;
 
 		when(entityManagerMock.createQuery(anyString())).thenReturn(queryMock);
 		when(queryMock.setParameter(anyString(), any())).thenReturn(queryMock);
@@ -77,7 +78,7 @@ class StoredFileRepositoryImplTest {
 		doThrow(mock(ConstraintViolationException.class)).when(entityManagerMock).flush();
 
 		// Act & Assert
-		assertThatThrownBy(() -> storedFileRepository.createExclusively(entity, now()))
+		assertThatThrownBy(() -> storedFileRepository.createExclusively(entity, TIMESTAMP))
 			.isInstanceOf(DataIntegrityViolationException.class)
 			.hasMessageContaining("An object is already stored under the id");
 	}

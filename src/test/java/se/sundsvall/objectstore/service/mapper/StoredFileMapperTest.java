@@ -12,7 +12,6 @@ import se.sundsvall.objectstore.integration.db.model.StoredFileEntity;
 import se.sundsvall.objectstore.integration.db.model.StoredFileSummary;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.time.OffsetDateTime.now;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
@@ -20,8 +19,9 @@ class StoredFileMapperTest {
 
 	private static final String ID = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b";
 	private static final String ETAG = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
-	private static final OffsetDateTime CREATED = now().minusDays(1);
-	private static final OffsetDateTime EXPIRES_AT = now().plusDays(7);
+	private static final OffsetDateTime TIMESTAMP = OffsetDateTime.parse("2026-08-20T12:00:00Z");
+	private static final OffsetDateTime CREATED = TIMESTAMP.minusDays(1);
+	private static final OffsetDateTime EXPIRES_AT = TIMESTAMP.plusDays(7);
 
 	private static byte[] content() {
 		return "content".getBytes(UTF_8);

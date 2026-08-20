@@ -1,7 +1,7 @@
 package se.sundsvall.objectstore.integration.db.model;
 
 import java.time.OffsetDateTime;
-import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.hamcrest.MatcherAssert;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -13,11 +13,18 @@ import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanToStringExcl
 import static com.google.code.beanmatchers.BeanMatchers.hasValidGettersAndSetters;
 import static com.google.code.beanmatchers.BeanMatchers.registerValueGenerator;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.time.OffsetDateTime.now;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.CoreMatchers.allOf;
 
 class StoredFileEntityTest {
+
+	/**
+	 * A fixed point in time rather than the wall clock, so that a failure is reproducible, and a counter rather than a
+	 * random offset from it, so that two generated values are never accidentally the same — which is what the equals and
+	 * hashCode matchers need in order to tell a difference from a match.
+	 */
+	private static final OffsetDateTime TIMESTAMP = OffsetDateTime.parse("2026-08-20T12:00:00Z");
+	private static final AtomicInteger TIMESTAMP_COUNTER = new AtomicInteger();
 
 	private static final String[] NON_KEY_PROPERTIES = {
 		"fileName", "contentType", "sizeInBytes", "etag", "content", "created", "expiresAt"
@@ -25,12 +32,12 @@ class StoredFileEntityTest {
 
 	@BeforeAll
 	static void setup() {
-		registerValueGenerator(() -> now().plusDays(new Random().nextInt(100)), OffsetDateTime.class);
+		registerValueGenerator(() -> TIMESTAMP.plusDays(TIMESTAMP_COUNTER.incrementAndGet()), OffsetDateTime.class);
 		registerValueGenerator(StoredFileEntityTest::createContent, byte[].class);
 	}
 
 	private static byte[] createContent() {
-		return ("content-" + new Random().nextInt(100)).getBytes(UTF_8);
+		return ("content-" + TIMESTAMP_COUNTER.incrementAndGet()).getBytes(UTF_8);
 	}
 
 	/**
@@ -75,8 +82,8 @@ class StoredFileEntityTest {
 		final var sizeInBytes = 20971L;
 		final var etag = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
 		final var content = createContent();
-		final var created = now();
-		final var expiresAt = now().plusDays(7);
+		final var created = TIMESTAMP;
+		final var expiresAt = TIMESTAMP.plusDays(7);
 
 		// Act
 		final var result = StoredFileEntity.create()
