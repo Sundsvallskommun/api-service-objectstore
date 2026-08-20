@@ -38,7 +38,8 @@ subset of S3 the consuming services need.
 
 - **Buckets are implicit.** A bucket is a string namespace on the object row, not an entity. Storing the first object in
   a bucket creates it; removing the last object leaves nothing behind. There are no bucket-level permissions, policies
-  or versioning.
+  or versioning. An object is keyed by its bucket and its id together, so the same id stored in two buckets is two
+  unrelated objects rather than one.
 - **Bucket names follow the S3 naming rules** (lowercase letters, digits and hyphens, 3–63 characters) so they remain
   valid bucket names after a migration to a real S3. Since buckets live at the root of the service, the names the
   framework serves itself — `actuator`, `api-docs`, `csrf`, `error`, `favicon.ico`, `h2-console`, `swagger-resources`,
@@ -55,7 +56,9 @@ subset of S3 the consuming services need.
   has replaced it, which is the one sense in which this service updates anything.
 - **A client that wants the opposite sends `If-None-Match: *`** and gets a `412` instead of an overwrite, matching the
   conditional writes of S3. The check runs before the request body is read, so a refused store never pulls the content
-  across the wire. An expired object does not stand in the way of one, since it is already invisible to every read. No
+  across the wire, and the primary key refuses the insert again at the end, so two simultaneous create-only stores of
+  the same id cannot both succeed. An expired object does not stand in the way of one, since it is already invisible to
+  every read. No
   other value is accepted in the header — a specific entity tag is refused with a `400` rather than ignored, because a
   client that sends one is asking for a guarantee and silently overwriting is the one answer it must not get.
 - **Content is sent and returned as the raw request body**, as with the S3 `PutObject` and `GetObject` calls — not as
@@ -66,11 +69,13 @@ subset of S3 the consuming services need.
   the header is absent, malformed or leaves nothing usable, in which case reads fall back to naming the file after its
   id.
 - **Every object carries an `ETag`** — the hex encoded SHA-256 digest of its content, returned on store and on every
-  read. A read whose `If-None-Match` matches is answered with a bare `304`. The row is still fetched — the MariaDB
-  driver materializes a BLOB along with any row it reads — but nothing is streamed back.
+  read. A read whose `If-None-Match` matches is answered with a bare `304` without the content being fetched at all: a
+  read looks up the metadata first and goes back for the content only once it is clear the client is getting it.
 - **Uploads are size limited by `storage.max-object-size`.** A raw request body carries no framework-enforced limit, so
   this property is the only thing bounding the memory an upload consumes. Oversized uploads are refused with `413`,
-  whether or not the client declared its length honestly.
+  whether or not the client declared its length honestly. The refusal is decided before the body is read, so
+  `server.tomcat.max-swallow-size` tracks the limit — see [Configuration](#configuration) — to keep a refused upload
+  from reaching the client as a connection reset instead of as the status.
 - **Deletes are idempotent**, matching S3 — deleting an object that does not exist returns `204`, not `404`.
 - **Objects expire.** Every object gets an expiry, either supplied per upload or derived from the configured default
   time to live. Expired objects are invisible to reads and lists immediately, and a scheduled job removes them from the
@@ -183,11 +188,29 @@ curl -X PUT "http://localhost:8080/attachments/$ID?expiresAt=2026-08-25T14:30:00
   ```
 - **Maximum object size** — objects are held in memory during upload and download, so keep this modest. Since content
   arrives as a raw request body there is no framework-enforced limit, so this property is the only bound on the memory
-  an upload consumes. The database server's `max_allowed_packet` must exceed it.
+  an upload consumes.
+
+  The default of 15 MB is chosen to sit under the 16 MB `max_allowed_packet` that a MariaDB server ships with, since an
+  object travels to the database inside a single statement. Raising it means raising `max_allowed_packet` to match —
+  otherwise a large upload is accepted, transferred in full, and only then refused by the database.
+
+  Tomcat discards at most `server.tomcat.max-swallow-size` of a request body it has decided not to read, and an upload
+  refused with a `413` or a `412` is refused before its body is read. That setting therefore tracks this property rather
+  than being given a value of its own, so that a refusal reaches the client as the status rather than as a connection
+  reset.
 
   ```yaml
   storage:
-    max-object-size: 50MB
+    max-object-size: 15MB
+  server:
+    tomcat:
+      max-swallow-size: ${storage.max-object-size}
+  ```
+
+  ```ini
+  # my.cnf on the database server, needed only when max-object-size is raised past 15MB
+  [mysqld]
+  max_allowed_packet = 64M
   ```
 
 ### Database Initialization

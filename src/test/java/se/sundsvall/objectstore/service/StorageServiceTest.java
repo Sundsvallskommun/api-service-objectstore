@@ -1,10 +1,9 @@
 package se.sundsvall.objectstore.service;
 
 import jakarta.servlet.http.HttpServletResponse;
-import java.io.ByteArrayInputStream;
-import java.sql.Blob;
-import java.sql.SQLException;
+import java.io.IOException;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -19,6 +18,7 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Limit;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -28,7 +28,6 @@ import se.sundsvall.objectstore.configuration.StorageProperties;
 import se.sundsvall.objectstore.integration.db.StoredFileRepository;
 import se.sundsvall.objectstore.integration.db.model.StoredFileEntity;
 import se.sundsvall.objectstore.integration.db.model.StoredFileSummary;
-import se.sundsvall.objectstore.service.util.BlobUtil;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.time.OffsetDateTime.now;
@@ -38,6 +37,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -46,9 +47,9 @@ import static org.springframework.http.HttpHeaders.CONTENT_DISPOSITION;
 import static org.springframework.http.HttpHeaders.CONTENT_TYPE;
 import static org.springframework.http.HttpHeaders.ETAG;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONTENT_TOO_LARGE;
 import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
-import static org.springframework.http.HttpStatus.CONTENT_TOO_LARGE;
 import static org.springframework.http.HttpStatus.PRECONDITION_FAILED;
 
 @ExtendWith(MockitoExtension.class)
@@ -68,21 +69,15 @@ class StorageServiceTest {
 	@Mock
 	private StoredFileRepository storedFileRepositoryMock;
 
-	@Mock
-	private BlobUtil blobUtilMock;
-
-	@Mock
-	private Blob blobMock;
-
 	@Captor
 	private ArgumentCaptor<StoredFileEntity> entityCaptor;
 
 	private StorageService serviceWith(final Duration timeToLive) {
-		return serviceWith(timeToLive, DataSize.ofMegabytes(50));
+		return serviceWith(timeToLive, DataSize.ofMegabytes(15));
 	}
 
 	private StorageService serviceWith(final Duration timeToLive, final DataSize maxObjectSize) {
-		return new StorageService(storedFileRepositoryMock, blobUtilMock, new StorageProperties(timeToLive, maxObjectSize));
+		return new StorageService(storedFileRepositoryMock, new StorageProperties(timeToLive, maxObjectSize));
 	}
 
 	private static MockHttpServletRequest requestWith(final byte[] content) {
@@ -92,7 +87,11 @@ class StorageServiceTest {
 	}
 
 	private static StoredFileSummary summary(final String id) {
-		return new StoredFileSummary(id, BUCKET, FILE_NAME, "application/pdf", 12L, ETAG_VALUE, now(), null);
+		return summary(id, FILE_NAME, "application/pdf", null);
+	}
+
+	private static StoredFileSummary summary(final String id, final String fileName, final String contentType, final OffsetDateTime expiresAt) {
+		return new StoredFileSummary(id, BUCKET, fileName, contentType, (long) CONTENT.length, ETAG_VALUE, now(), expiresAt);
 	}
 
 	@Test
@@ -100,7 +99,6 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(blobUtilMock.toBlob(CONTENT)).thenReturn(blobMock);
 		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
@@ -116,7 +114,7 @@ class StorageServiceTest {
 		assertThat(captured.getContentType()).isEqualTo("application/pdf");
 		assertThat(captured.getSizeInBytes()).isEqualTo(CONTENT.length);
 		assertThat(captured.getEtag()).isEqualTo(ETAG_VALUE);
-		assertThat(captured.getContent()).isSameAs(blobMock);
+		assertThat(captured.getContent()).isEqualTo(CONTENT);
 		assertThat(captured.getExpiresAt()).isCloseTo(now().plusDays(7), within(5, SECONDS));
 
 		assertThat(result.getId()).isEqualTo(ID);
@@ -130,7 +128,6 @@ class StorageServiceTest {
 		final var service = serviceWith(Duration.ofDays(7));
 		final var expiresAt = now().plusHours(2);
 
-		when(blobUtilMock.toBlob(CONTENT)).thenReturn(blobMock);
 		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
@@ -145,7 +142,6 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(null);
 
-		when(blobUtilMock.toBlob(CONTENT)).thenReturn(blobMock);
 		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
@@ -166,7 +162,6 @@ class StorageServiceTest {
 		final var service = serviceWith(Duration.ofDays(7));
 		final var replacement = "replacement".getBytes(UTF_8);
 
-		when(blobUtilMock.toBlob(replacement)).thenReturn(blobMock);
 		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
@@ -201,24 +196,50 @@ class StorageServiceTest {
 
 		verify(storedFileRepositoryMock).existsUnexpired(eq(BUCKET), eq(ID), any());
 		verifyNoMoreInteractions(storedFileRepositoryMock);
-		verifyNoInteractions(blobUtilMock);
 	}
 
+	/**
+	 * A create-only store goes in through the primary key rather than through a plain save, so that the object is only
+	 * stored if nothing else got there first.
+	 */
 	@Test
 	void storeWithCreateOnlyPreconditionWhenIdIsFree() {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
 		when(storedFileRepositoryMock.existsUnexpired(eq(BUCKET), eq(ID), any())).thenReturn(false);
-		when(blobUtilMock.toBlob(CONTENT)).thenReturn(blobMock);
-		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
 		final var result = service.store(BUCKET, ID, null, DISPOSITION, "*", null, requestWith(CONTENT));
 
 		// Assert
 		assertThat(result.getId()).isEqualTo(ID);
-		verify(storedFileRepositoryMock).save(any(StoredFileEntity.class));
+		assertThat(result.getEtag()).isEqualTo(ETAG_VALUE);
+		verify(storedFileRepositoryMock).createExclusively(entityCaptor.capture(), any());
+		assertThat(entityCaptor.getValue().getContent()).isEqualTo(CONTENT);
+		verify(storedFileRepositoryMock, never()).save(any(StoredFileEntity.class));
+	}
+
+	/**
+	 * The check that the id is free cannot keep two simultaneous create-only stores from both passing it, so the refusal
+	 * the database hands back has to be answered with the same status the check would have produced.
+	 */
+	@Test
+	void storeWithCreateOnlyPreconditionWhenTheIdIsTakenConcurrently() {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+
+		when(storedFileRepositoryMock.existsUnexpired(eq(BUCKET), eq(ID), any())).thenReturn(false);
+		doThrow(new DataIntegrityViolationException("duplicate key"))
+			.when(storedFileRepositoryMock).createExclusively(any(StoredFileEntity.class), any());
+
+		// Act & Assert
+		assertThatThrownBy(() -> service.store(BUCKET, ID, null, DISPOSITION, "*", null, requestWith(CONTENT)))
+			.isInstanceOf(Problem.class)
+			.hasMessageContaining("An object with id [%s] already exists in bucket [%s]".formatted(ID, BUCKET))
+			.extracting("status").isEqualTo(PRECONDITION_FAILED);
+
+		verify(storedFileRepositoryMock, never()).save(any(StoredFileEntity.class));
 	}
 
 	/**
@@ -236,7 +257,7 @@ class StorageServiceTest {
 			.hasMessageContaining("Only [*] is supported in the If-None-Match header of a store")
 			.extracting("status").isEqualTo(BAD_REQUEST);
 
-		verifyNoInteractions(storedFileRepositoryMock, blobUtilMock);
+		verifyNoInteractions(storedFileRepositoryMock);
 	}
 
 	/**
@@ -250,7 +271,6 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(blobUtilMock.toBlob(CONTENT)).thenReturn(blobMock);
 		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
@@ -278,7 +298,6 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(blobUtilMock.toBlob(CONTENT)).thenReturn(blobMock);
 		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
@@ -299,7 +318,7 @@ class StorageServiceTest {
 			.hasMessageContaining("Content of the uploaded file must not be empty")
 			.extracting("status").isEqualTo(BAD_REQUEST);
 
-		verifyNoInteractions(storedFileRepositoryMock, blobUtilMock);
+		verifyNoInteractions(storedFileRepositoryMock);
 	}
 
 	/**
@@ -319,7 +338,7 @@ class StorageServiceTest {
 			.hasMessageContaining("Content of the uploaded file exceeds the maximum size of 4 bytes")
 			.extracting("status").isEqualTo(CONTENT_TOO_LARGE);
 
-		verifyNoInteractions(storedFileRepositoryMock, blobUtilMock);
+		verifyNoInteractions(storedFileRepositoryMock);
 	}
 
 	@Test
@@ -344,27 +363,17 @@ class StorageServiceTest {
 			.isInstanceOf(Problem.class)
 			.extracting("status").isEqualTo(CONTENT_TOO_LARGE);
 
-		verifyNoInteractions(storedFileRepositoryMock, blobUtilMock);
+		verifyNoInteractions(storedFileRepositoryMock);
 	}
 
 	@Test
-	void readTo() throws SQLException {
+	void readTo() {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
-		final var entity = StoredFileEntity.create()
-			.withId(ID)
-			.withBucket(BUCKET)
-			.withFileName(FILE_NAME)
-			.withContentType("application/pdf")
-			.withSizeInBytes((long) CONTENT.length)
-			.withEtag(ETAG_VALUE)
-			.withContent(blobMock)
-			.withExpiresAt(now().plusDays(1));
 
-		when(storedFileRepositoryMock.findByBucketAndId(BUCKET, ID)).thenReturn(Optional.of(entity));
-		when(blobMock.length()).thenReturn((long) CONTENT.length);
-		when(blobMock.getBinaryStream()).thenReturn(new ByteArrayInputStream(CONTENT));
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, FILE_NAME, "application/pdf", now().plusDays(1))));
+		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);
 
 		// Act
 		service.readTo(BUCKET, ID, null, response);
@@ -377,15 +386,13 @@ class StorageServiceTest {
 	}
 
 	@Test
-	void readToWithoutContentTypeAndFileName() throws SQLException {
+	void readToWithoutContentTypeAndFileName() {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
-		final var entity = StoredFileEntity.create().withId(ID).withBucket(BUCKET).withEtag(ETAG_VALUE).withContent(blobMock);
 
-		when(storedFileRepositoryMock.findByBucketAndId(BUCKET, ID)).thenReturn(Optional.of(entity));
-		when(blobMock.length()).thenReturn((long) CONTENT.length);
-		when(blobMock.getBinaryStream()).thenReturn(new ByteArrayInputStream(CONTENT));
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, null, null, null)));
+		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);
 
 		// Act
 		service.readTo(BUCKET, ID, null, response);
@@ -410,9 +417,8 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
-		final var entity = StoredFileEntity.create().withId(ID).withBucket(BUCKET).withEtag(ETAG_VALUE).withContent(blobMock);
 
-		when(storedFileRepositoryMock.findByBucketAndId(BUCKET, ID)).thenReturn(Optional.of(entity));
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID)));
 
 		// Act
 		service.readTo(BUCKET, ID, ifNoneMatch, response);
@@ -421,19 +427,17 @@ class StorageServiceTest {
 		assertThat(response.getStatus()).isEqualTo(304);
 		assertThat(response.getHeader(ETAG)).isEqualTo("\"%s\"".formatted(ETAG_VALUE));
 		assertThat(response.getContentAsByteArray()).isEmpty();
-		verifyNoInteractions(blobMock);
+		verify(storedFileRepositoryMock, never()).findContent(any(), any());
 	}
 
 	@Test
-	void readToWhenIfNoneMatchDoesNotMatch() throws SQLException {
+	void readToWhenIfNoneMatchDoesNotMatch() {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
-		final var entity = StoredFileEntity.create().withId(ID).withBucket(BUCKET).withEtag(ETAG_VALUE).withContent(blobMock);
 
-		when(storedFileRepositoryMock.findByBucketAndId(BUCKET, ID)).thenReturn(Optional.of(entity));
-		when(blobMock.length()).thenReturn((long) CONTENT.length);
-		when(blobMock.getBinaryStream()).thenReturn(new ByteArrayInputStream(CONTENT));
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID)));
+		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);
 
 		// Act
 		service.readTo(BUCKET, ID, "\"stale\"", response);
@@ -449,7 +453,7 @@ class StorageServiceTest {
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
 
-		when(storedFileRepositoryMock.findByBucketAndId(BUCKET, ID)).thenReturn(Optional.empty());
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.empty());
 
 		// Act & Assert
 		assertThatThrownBy(() -> service.readTo(BUCKET, ID, null, response))
@@ -463,26 +467,46 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
-		final var entity = StoredFileEntity.create().withId(ID).withExpiresAt(now().minusSeconds(1));
 
-		when(storedFileRepositoryMock.findByBucketAndId(BUCKET, ID)).thenReturn(Optional.of(entity));
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, FILE_NAME, "application/pdf", now().minusSeconds(1))));
 
 		// Act & Assert
 		assertThatThrownBy(() -> service.readTo(BUCKET, ID, null, response))
 			.isInstanceOf(Problem.class)
 			.extracting("status").isEqualTo(NOT_FOUND);
+
+		verify(storedFileRepositoryMock, never()).findContent(any(), any());
+	}
+
+	/**
+	 * The metadata and the content are fetched separately, so an object deleted in between has to be answered as one that
+	 * was never there rather than with a half-written response.
+	 */
+	@Test
+	void readToWhenContentDisappearsBetweenTheQueries() {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+		final var response = new MockHttpServletResponse();
+
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID)));
+		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(null);
+
+		// Act & Assert
+		assertThatThrownBy(() -> service.readTo(BUCKET, ID, null, response))
+			.isInstanceOf(Problem.class)
+			.hasMessageContaining("No object with id [%s] exists in bucket [%s]".formatted(ID, BUCKET))
+			.extracting("status").isEqualTo(NOT_FOUND);
 	}
 
 	@Test
-	void readToWhenContentCannotBeRead() throws Exception {
+	void readToWhenContentCannotBeWritten() throws Exception {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = Mockito.mock(HttpServletResponse.class);
-		final var entity = StoredFileEntity.create().withId(ID).withEtag(ETAG_VALUE).withContent(blobMock);
 
-		when(storedFileRepositoryMock.findByBucketAndId(BUCKET, ID)).thenReturn(Optional.of(entity));
-		when(blobMock.length()).thenReturn((long) CONTENT.length);
-		when(blobMock.getBinaryStream()).thenThrow(new SQLException("boom"));
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID)));
+		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);
+		when(response.getOutputStream()).thenThrow(new IOException("boom"));
 
 		// Act & Assert
 		assertThatThrownBy(() -> service.readTo(BUCKET, ID, null, response))
@@ -543,20 +567,23 @@ class StorageServiceTest {
 		assertThat(result.isTruncated()).isFalse();
 	}
 
+	/**
+	 * Deleting is a statement rather than a load followed by a remove, so that a large object is not pulled into memory
+	 * on its way out.
+	 */
 	@Test
 	void delete() {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
-		final var entity = StoredFileEntity.create().withId(ID).withBucket(BUCKET);
 
-		when(storedFileRepositoryMock.findByBucketAndId(BUCKET, ID)).thenReturn(Optional.of(entity));
+		when(storedFileRepositoryMock.deleteByBucketAndId(BUCKET, ID)).thenReturn(1);
 
 		// Act
 		service.delete(BUCKET, ID);
 
 		// Assert
-		verify(storedFileRepositoryMock).findByBucketAndId(BUCKET, ID);
-		verify(storedFileRepositoryMock).delete(entity);
+		verify(storedFileRepositoryMock).deleteByBucketAndId(BUCKET, ID);
+		verifyNoMoreInteractions(storedFileRepositoryMock);
 	}
 
 	@Test
@@ -564,13 +591,13 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(storedFileRepositoryMock.findByBucketAndId(BUCKET, ID)).thenReturn(Optional.empty());
+		when(storedFileRepositoryMock.deleteByBucketAndId(BUCKET, ID)).thenReturn(0);
 
 		// Act
 		service.delete(BUCKET, ID);
 
 		// Assert
-		verify(storedFileRepositoryMock).findByBucketAndId(BUCKET, ID);
+		verify(storedFileRepositoryMock).deleteByBucketAndId(BUCKET, ID);
 		verifyNoMoreInteractions(storedFileRepositoryMock);
 	}
 }

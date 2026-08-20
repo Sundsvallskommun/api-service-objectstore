@@ -1,10 +1,8 @@
 package se.sundsvall.objectstore.service.mapper;
 
-import java.sql.Blob;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.stream.Stream;
-import javax.sql.rowset.serial.SerialBlob;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -25,12 +23,8 @@ class StoredFileMapperTest {
 	private static final OffsetDateTime CREATED = now().minusDays(1);
 	private static final OffsetDateTime EXPIRES_AT = now().plusDays(7);
 
-	private static Blob blob() {
-		try {
-			return new SerialBlob("content".getBytes(UTF_8));
-		} catch (final Exception e) {
-			throw new IllegalStateException(e);
-		}
+	private static byte[] content() {
+		return "content".getBytes(UTF_8);
 	}
 
 	private static StoredFileSummary summary(final String id) {
@@ -40,7 +34,7 @@ class StoredFileMapperTest {
 	@Test
 	void toStoredFileEntity() {
 		// Arrange
-		final var content = blob();
+		final var content = content();
 
 		// Act
 		final var result = StoredFileMapper.toStoredFileEntity("attachments", ID, "invoice.pdf", "application/pdf", 1024L, ETAG, content, CREATED, EXPIRES_AT);

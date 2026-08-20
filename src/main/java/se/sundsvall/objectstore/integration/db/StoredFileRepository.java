@@ -6,13 +6,15 @@ import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import se.sundsvall.objectstore.integration.db.model.StoredFileEntity;
+import se.sundsvall.objectstore.integration.db.model.StoredFileId;
 import se.sundsvall.objectstore.integration.db.model.StoredFileSummary;
 
 @CircuitBreaker(name = "storedFileRepository")
-public interface StoredFileRepository extends JpaRepository<StoredFileEntity, String> {
+public interface StoredFileRepository extends JpaRepository<StoredFileEntity, StoredFileId>, StoredFileRepositoryCustom {
 
 	Optional<StoredFileEntity> findByBucketAndId(String bucket, String id);
 
@@ -33,6 +35,34 @@ public interface StoredFileRepository extends JpaRepository<StoredFileEntity, St
 		and (entity.expiresAt is null or entity.expiresAt > :timestamp)
 		""")
 	boolean existsUnexpired(@Param("bucket") String bucket, @Param("id") String id, @Param("timestamp") OffsetDateTime timestamp);
+
+	/**
+	 * Finds the metadata of a single object, without its content. Reads start here so that a request answered with a 304
+	 * never pulls the content out of the database at all, and so that the content of a request that is answered with the
+	 * object is fetched separately, outside the transaction that decided the object exists.
+	 *
+	 * @param  bucket the bucket holding the object
+	 * @param  id     the id identifying the object
+	 * @return        the metadata of the object, or empty when the bucket holds no object under the id
+	 */
+	@Query("""
+		select new se.sundsvall.objectstore.integration.db.model.StoredFileSummary(
+			entity.id, entity.bucket, entity.fileName, entity.contentType, entity.sizeInBytes, entity.etag, entity.created, entity.expiresAt)
+		from StoredFileEntity entity
+		where entity.bucket = :bucket
+		and entity.id = :id
+		""")
+	Optional<StoredFileSummary> findSummary(@Param("bucket") String bucket, @Param("id") String id);
+
+	/**
+	 * Finds the content of a single object and nothing else.
+	 *
+	 * @param  bucket the bucket holding the object
+	 * @param  id     the id identifying the object
+	 * @return        the content of the object, or null when the bucket holds no object under the id
+	 */
+	@Query("select entity.content from StoredFileEntity entity where entity.bucket = :bucket and entity.id = :id")
+	byte[] findContent(@Param("bucket") String bucket, @Param("id") String id);
 
 	/**
 	 * Finds a page of the objects in a bucket, ordered by id, mirroring the lexicographic ordering by key that S3 lists
@@ -58,12 +88,25 @@ public interface StoredFileRepository extends JpaRepository<StoredFileEntity, St
 		@Param("timestamp") OffsetDateTime timestamp, Limit limit);
 
 	/**
-	 * Finds the ids of all objects that have expired. Only the ids are fetched to avoid loading the (potentially large)
-	 * content of every expired object into memory.
+	 * Deletes an object. A statement rather than a load followed by a remove, so that deleting a large object does not
+	 * pull its content into memory on the way out.
+	 *
+	 * @param  bucket the bucket holding the object
+	 * @param  id     the id identifying the object
+	 * @return        the number of deleted objects, which is one or zero
+	 */
+	@Modifying
+	@Query("delete from StoredFileEntity entity where entity.bucket = :bucket and entity.id = :id")
+	int deleteByBucketAndId(@Param("bucket") String bucket, @Param("id") String id);
+
+	/**
+	 * Deletes every object whose expiry has passed, in one statement. Selecting the expired objects first would load the
+	 * content of every one of them into memory only to throw it away.
 	 *
 	 * @param  timestamp the point in time to compare the expiry against
-	 * @return           the ids of all objects that expired before the given timestamp
+	 * @return           the number of deleted objects
 	 */
-	@Query("select entity.id from StoredFileEntity entity where entity.expiresAt is not null and entity.expiresAt < :timestamp")
-	List<String> findExpiredIds(@Param("timestamp") OffsetDateTime timestamp);
+	@Modifying
+	@Query("delete from StoredFileEntity entity where entity.expiresAt is not null and entity.expiresAt < :timestamp")
+	int deleteExpired(@Param("timestamp") OffsetDateTime timestamp);
 }

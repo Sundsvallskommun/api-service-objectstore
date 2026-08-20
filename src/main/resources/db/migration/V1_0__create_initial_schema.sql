@@ -1,6 +1,6 @@
 create table stored_file (
-    id            varchar(36)   not null,
     bucket        varchar(63)   not null,
+    id            varchar(36)   not null,
     file_name     varchar(255),
     content_type  varchar(255),
     size_in_bytes bigint        not null,
@@ -8,10 +8,9 @@ create table stored_file (
     content       longblob,
     created       datetime(6)   not null,
     expires_at    datetime(6),
-    primary key (id)
+    primary key (bucket, id)
 ) engine = InnoDB;
 
-create index ix_stored_file_bucket_id on stored_file (bucket, id);
 create index ix_stored_file_expires_at on stored_file (expires_at);
 
 create table shedlock (

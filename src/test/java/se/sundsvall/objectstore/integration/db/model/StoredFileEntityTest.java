@@ -1,9 +1,7 @@
 package se.sundsvall.objectstore.integration.db.model;
 
-import java.sql.Blob;
 import java.time.OffsetDateTime;
 import java.util.Random;
-import javax.sql.rowset.serial.SerialBlob;
 import org.hamcrest.MatcherAssert;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -11,7 +9,7 @@ import org.junit.jupiter.api.Test;
 import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanConstructor;
 import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanEquals;
 import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanHashCode;
-import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanToString;
+import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanToStringExcluding;
 import static com.google.code.beanmatchers.BeanMatchers.hasValidGettersAndSetters;
 import static com.google.code.beanmatchers.BeanMatchers.registerValueGenerator;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -24,17 +22,17 @@ class StoredFileEntityTest {
 	@BeforeAll
 	static void setup() {
 		registerValueGenerator(() -> now().plusDays(new Random().nextInt(100)), OffsetDateTime.class);
-		registerValueGenerator(StoredFileEntityTest::createBlob, Blob.class);
+		registerValueGenerator(StoredFileEntityTest::createContent, byte[].class);
 	}
 
-	private static Blob createBlob() {
-		try {
-			return new SerialBlob(("content-" + new Random().nextInt(100)).getBytes(UTF_8));
-		} catch (final Exception e) {
-			throw new IllegalStateException(e);
-		}
+	private static byte[] createContent() {
+		return ("content-" + new Random().nextInt(100)).getBytes(UTF_8);
 	}
 
+	/**
+	 * The content is excluded from the toString assertion because toString reports its size rather than its bytes —
+	 * anything else would put an entire object into every log line that mentions the entity.
+	 */
 	@Test
 	void testBean() {
 		MatcherAssert.assertThat(StoredFileEntity.class, allOf(
@@ -42,7 +40,7 @@ class StoredFileEntityTest {
 			hasValidGettersAndSetters(),
 			hasValidBeanHashCode(),
 			hasValidBeanEquals(),
-			hasValidBeanToString()));
+			hasValidBeanToStringExcluding("content")));
 	}
 
 	@Test
@@ -54,7 +52,7 @@ class StoredFileEntityTest {
 		final var contentType = "application/pdf";
 		final var sizeInBytes = 20971L;
 		final var etag = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
-		final var content = createBlob();
+		final var content = createContent();
 		final var created = now();
 		final var expiresAt = now().plusDays(7);
 
@@ -81,6 +79,16 @@ class StoredFileEntityTest {
 		assertThat(result.getContent()).isEqualTo(content);
 		assertThat(result.getCreated()).isEqualTo(created);
 		assertThat(result.getExpiresAt()).isEqualTo(expiresAt);
+	}
+
+	/**
+	 * The size of the content stands in for the content itself, so that logging an entity never dumps an object into the
+	 * log.
+	 */
+	@Test
+	void testToStringReportsTheSizeOfTheContent() {
+		assertThat(StoredFileEntity.create().withContent("12345".getBytes(UTF_8)))
+			.hasToString("StoredFileEntity{id='null', bucket='null', fileName='null', contentType='null', sizeInBytes=null, etag='null', content=5 bytes, created=null, expiresAt=null}");
 	}
 
 	@Test

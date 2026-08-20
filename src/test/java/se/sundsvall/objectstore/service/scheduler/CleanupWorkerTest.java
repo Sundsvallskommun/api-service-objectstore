@@ -1,7 +1,6 @@
 package se.sundsvall.objectstore.service.scheduler;
 
 import java.time.OffsetDateTime;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -32,33 +31,36 @@ class CleanupWorkerTest {
 	@InjectMocks
 	private CleanupWorker cleanupWorker;
 
+	/**
+	 * The expired objects are removed by one statement rather than fetched and then deleted, so nothing but the count
+	 * ever comes back from the database.
+	 */
 	@Test
 	void removeExpiredObjects() {
 		// Arrange
-		final var ids = List.of("id-1", "id-2");
-		when(storedFileRepositoryMock.findExpiredIds(any(OffsetDateTime.class))).thenReturn(ids);
+		when(storedFileRepositoryMock.deleteExpired(any(OffsetDateTime.class))).thenReturn(2);
 
 		// Act
 		final var result = cleanupWorker.removeExpiredObjects();
 
 		// Assert
 		assertThat(result).isEqualTo(2);
-		verify(storedFileRepositoryMock).findExpiredIds(timestampCaptor.capture());
+		verify(storedFileRepositoryMock).deleteExpired(timestampCaptor.capture());
 		assertThat(timestampCaptor.getValue()).isCloseTo(now(), within(5, SECONDS));
-		verify(storedFileRepositoryMock).deleteAllById(ids);
+		verifyNoMoreInteractions(storedFileRepositoryMock);
 	}
 
 	@Test
 	void removeExpiredObjectsWhenNoneExpired() {
 		// Arrange
-		when(storedFileRepositoryMock.findExpiredIds(any(OffsetDateTime.class))).thenReturn(List.of());
+		when(storedFileRepositoryMock.deleteExpired(any(OffsetDateTime.class))).thenReturn(0);
 
 		// Act
 		final var result = cleanupWorker.removeExpiredObjects();
 
 		// Assert
 		assertThat(result).isZero();
-		verify(storedFileRepositoryMock).findExpiredIds(any(OffsetDateTime.class));
+		verify(storedFileRepositoryMock).deleteExpired(any(OffsetDateTime.class));
 		verifyNoMoreInteractions(storedFileRepositoryMock);
 	}
 }

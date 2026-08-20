@@ -5,11 +5,11 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Limit;
 import org.springframework.http.ContentDisposition;
 import org.springframework.stereotype.Service;
@@ -20,7 +20,7 @@ import se.sundsvall.objectstore.api.model.ObjectListing;
 import se.sundsvall.objectstore.configuration.StorageProperties;
 import se.sundsvall.objectstore.integration.db.StoredFileRepository;
 import se.sundsvall.objectstore.integration.db.model.StoredFileEntity;
-import se.sundsvall.objectstore.service.util.BlobUtil;
+import se.sundsvall.objectstore.integration.db.model.StoredFileSummary;
 
 import static jakarta.servlet.http.HttpServletResponse.SC_NOT_MODIFIED;
 import static java.lang.Math.min;
@@ -33,12 +33,11 @@ import static org.springframework.http.HttpHeaders.CONTENT_DISPOSITION;
 import static org.springframework.http.HttpHeaders.CONTENT_TYPE;
 import static org.springframework.http.HttpHeaders.ETAG;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONTENT_TOO_LARGE;
 import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
-import static org.springframework.http.HttpStatus.CONTENT_TOO_LARGE;
 import static org.springframework.http.HttpStatus.PRECONDITION_FAILED;
 import static org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE;
-import static org.springframework.util.StreamUtils.copy;
 import static se.sundsvall.objectstore.service.mapper.StoredFileMapper.toFileMetadata;
 import static se.sundsvall.objectstore.service.mapper.StoredFileMapper.toObjectListing;
 import static se.sundsvall.objectstore.service.mapper.StoredFileMapper.toStoredFileEntity;
@@ -83,12 +82,10 @@ public class StorageService {
 	private static final int FILE_NAME_MAX_LENGTH = 255;
 
 	private final StoredFileRepository storedFileRepository;
-	private final BlobUtil blobUtil;
 	private final StorageProperties storageProperties;
 
-	public StorageService(final StoredFileRepository storedFileRepository, final BlobUtil blobUtil, final StorageProperties storageProperties) {
+	public StorageService(final StoredFileRepository storedFileRepository, final StorageProperties storageProperties) {
 		this.storedFileRepository = storedFileRepository;
-		this.blobUtil = blobUtil;
 		this.storageProperties = storageProperties;
 	}
 
@@ -97,6 +94,10 @@ public class StorageService {
 	 * from the raw request body and storing to an id that already holds an object replaces it wholesale, so a client that
 	 * retries a store it never saw the response to ends up with exactly one object rather than two. A client that wants
 	 * the opposite guarantee sends a wildcard If-None-Match and gets a 412 rather than an overwrite.
+	 * <p>
+	 * Deliberately not transactional. Reading the body means waiting on the client, and holding a pooled database
+	 * connection for as long as a client takes to upload is what lets a handful of slow ones stall the service. The write
+	 * that follows carries its own transaction.
 	 *
 	 * @param  bucket             the bucket to store the object in
 	 * @param  id                 the id to store the object under
@@ -108,11 +109,16 @@ public class StorageService {
 	 * @param  request            the request holding the content
 	 * @return                    the metadata of the stored object, holding the digest of the content
 	 */
-	@Transactional
 	public FileMetadata store(final String bucket, final String id, final String contentType, final String contentDisposition,
 		final String ifNoneMatch, final OffsetDateTime expiresAt, final HttpServletRequest request) {
 
-		verifyPrecondition(bucket, id, ifNoneMatch);
+		final var createOnly = isCreateOnly(ifNoneMatch);
+
+		// Refusing here rather than after the read keeps a store that is going to be refused from pulling its content
+		// across the wire. It is not what makes the refusal correct — the primary key does that, below.
+		if (createOnly && storedFileRepository.existsUnexpired(bucket, id, now())) {
+			throw Problem.valueOf(PRECONDITION_FAILED, ERROR_ALREADY_EXISTS.formatted(id, bucket));
+		}
 
 		final var content = readContent(request);
 
@@ -121,42 +127,48 @@ public class StorageService {
 		}
 
 		final var entity = toStoredFileEntity(bucket, id, toFileName(contentDisposition), contentType, (long) content.length,
-			toEtag(content), blobUtil.toBlob(content), now(), toExpiry(expiresAt));
+			toEtag(content), content, now(), toExpiry(expiresAt));
+
+		if (createOnly) {
+			return toFileMetadata(createExclusively(entity));
+		}
 
 		return toFileMetadata(storedFileRepository.save(entity));
 	}
 
 	/**
-	 * Writes an object to the response. When the client sends an If-None-Match that matches the digest of the object the
-	 * response is a bare 304 with no body — the row is still fetched, since the MariaDB driver materializes a BLOB along
-	 * with it, but nothing is streamed back.
+	 * Writes an object to the response. The metadata is fetched first and the content only once it is clear the client is
+	 * getting it, so a request answered with a 304 never pulls the content out of the database.
+	 * <p>
+	 * Deliberately not transactional, for the same reason as a store: writing the response means waiting on the client,
+	 * and the connection that read the object has no business being held open for it.
 	 *
 	 * @param bucket      the bucket holding the object
 	 * @param id          the id identifying the object
 	 * @param ifNoneMatch the If-None-Match header sent by the client, or null
 	 * @param response    the response to write to
 	 */
-	@Transactional(readOnly = true)
 	public void readTo(final String bucket, final String id, final String ifNoneMatch, final HttpServletResponse response) {
-		final var entity = findExisting(bucket, id);
+		final var summary = findExisting(bucket, id);
 
-		response.addHeader(ETAG, "\"%s\"".formatted(entity.getEtag()));
+		response.addHeader(ETAG, "\"%s\"".formatted(summary.etag()));
 
-		if (isNotModified(ifNoneMatch, entity.getEtag())) {
+		if (isNotModified(ifNoneMatch, summary.etag())) {
 			response.setStatus(SC_NOT_MODIFIED);
 			return;
 		}
 
+		final var content = ofNullable(storedFileRepository.findContent(bucket, id))
+			.orElseThrow(() -> Problem.valueOf(NOT_FOUND, ERROR_NOT_FOUND.formatted(id, bucket)));
+
 		try {
-			final var content = entity.getContent();
+			response.addHeader(CONTENT_TYPE, ofNullable(summary.contentType()).orElse(APPLICATION_OCTET_STREAM_VALUE));
+			response.addHeader(CONTENT_DISPOSITION, CONTENT_DISPOSITION_VALUE.formatted(ofNullable(summary.fileName()).orElse(summary.id())));
+			response.setContentLength(content.length);
 
-			response.addHeader(CONTENT_TYPE, ofNullable(entity.getContentType()).orElse(APPLICATION_OCTET_STREAM_VALUE));
-			response.addHeader(CONTENT_DISPOSITION, CONTENT_DISPOSITION_VALUE.formatted(ofNullable(entity.getFileName()).orElse(entity.getId())));
-			response.setContentLengthLong(content.length());
-
-			copy(content.getBinaryStream(), response.getOutputStream());
-		} catch (final SQLException | IOException e) {
-			LOG.warn("Failed to read content of object with id [{}] in bucket [{}]", id, bucket, e);
+			response.getOutputStream().write(content);
+		} catch (final IOException e) {
+			LOG.warn("Failed to write content of object with id [{}] in bucket [{}]", id, bucket, e);
 			throw Problem.valueOf(INTERNAL_SERVER_ERROR, ERROR_READ_CONTENT.formatted(id, bucket));
 		}
 	}
@@ -186,40 +198,53 @@ public class StorageService {
 	 */
 	@Transactional
 	public void delete(final String bucket, final String id) {
-		storedFileRepository.findByBucketAndId(bucket, id)
-			.ifPresent(storedFileRepository::delete);
+		storedFileRepository.deleteByBucketAndId(bucket, id);
 	}
 
 	/**
-	 * Refuses a store that carries a create-only precondition the bucket cannot satisfy. The check runs before the request
-	 * body is read, so a refused store never pulls the content across the wire. An expired object does not stand in the
-	 * way of one, since it is already invisible to every read.
+	 * Stores an object that no other store may already have stored under the same id, translating the refusal the
+	 * database hands back into the status a client sent a create-only precondition to get.
 	 *
-	 * @param bucket      the bucket to store the object in
-	 * @param id          the id to store the object under
-	 * @param ifNoneMatch the If-None-Match header sent by the client, or null
+	 * @param  entity the object to store
+	 * @return        the stored object
 	 */
-	private void verifyPrecondition(final String bucket, final String id, final String ifNoneMatch) {
-		ofNullable(ifNoneMatch)
+	private StoredFileEntity createExclusively(final StoredFileEntity entity) {
+		try {
+			storedFileRepository.createExclusively(entity, now());
+		} catch (final DataIntegrityViolationException e) {
+			throw Problem.valueOf(PRECONDITION_FAILED, ERROR_ALREADY_EXISTS.formatted(entity.getId(), entity.getBucket()));
+		}
+
+		return entity;
+	}
+
+	/**
+	 * Reads the If-None-Match header of a store. The only value a store accepts is a wildcard, and anything else is
+	 * refused rather than ignored.
+	 *
+	 * @param  ifNoneMatch the header sent by the client, or null
+	 * @return             whether the client asked for the store to be create-only
+	 */
+	private static boolean isCreateOnly(final String ifNoneMatch) {
+		return ofNullable(ifNoneMatch)
 			.map(String::strip)
-			.ifPresent(precondition -> {
+			.map(precondition -> {
 				if (!CREATE_ONLY.equals(precondition)) {
 					throw Problem.valueOf(BAD_REQUEST, ERROR_UNSUPPORTED_PRECONDITION.formatted(CREATE_ONLY));
 				}
-				if (storedFileRepository.existsUnexpired(bucket, id, now())) {
-					throw Problem.valueOf(PRECONDITION_FAILED, ERROR_ALREADY_EXISTS.formatted(id, bucket));
-				}
-			});
+				return true;
+			})
+			.orElse(false);
 	}
 
-	private StoredFileEntity findExisting(final String bucket, final String id) {
-		return storedFileRepository.findByBucketAndId(bucket, id)
+	private StoredFileSummary findExisting(final String bucket, final String id) {
+		return storedFileRepository.findSummary(bucket, id)
 			.filter(not(StorageService::isExpired))
 			.orElseThrow(() -> Problem.valueOf(NOT_FOUND, ERROR_NOT_FOUND.formatted(id, bucket)));
 	}
 
-	private static boolean isExpired(final StoredFileEntity entity) {
-		return ofNullable(entity.getExpiresAt())
+	private static boolean isExpired(final StoredFileSummary summary) {
+		return ofNullable(summary.expiresAt())
 			.map(expiry -> expiry.isBefore(now()))
 			.orElse(false);
 	}

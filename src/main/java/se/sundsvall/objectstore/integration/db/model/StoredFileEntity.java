@@ -1,34 +1,39 @@
 package se.sundsvall.objectstore.integration.db.model;
 
-import jakarta.persistence.Basic;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
 import jakarta.persistence.Index;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
-import java.sql.Blob;
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.Objects;
 import org.hibernate.annotations.TimeZoneStorage;
 
-import static jakarta.persistence.FetchType.LAZY;
 import static org.hibernate.annotations.TimeZoneStorageType.NORMALIZE;
 
 @Entity
 @Table(name = "stored_file",
 	indexes = {
-		@Index(name = "ix_stored_file_bucket_id", columnList = "bucket, id"),
 		@Index(name = "ix_stored_file_expires_at", columnList = "expires_at")
 	})
+@IdClass(StoredFileId.class)
 public class StoredFileEntity {
+
+	/**
+	 * The bucket is part of the primary key rather than an ordinary column. Keying on the id alone would let a store
+	 * into one bucket collide with an object another bucket already holds, and since a store is a merge, the collision
+	 * would move the existing object rather than being refused.
+	 */
+	@Id
+	@Column(name = "bucket", nullable = false, updatable = false, length = 63)
+	private String bucket;
 
 	@Id
 	@Column(name = "id", nullable = false, updatable = false, length = 36)
 	private String id;
-
-	@Column(name = "bucket", nullable = false, length = 63)
-	private String bucket;
 
 	@Column(name = "file_name", length = 255)
 	private String fileName;
@@ -42,10 +47,14 @@ public class StoredFileEntity {
 	@Column(name = "etag", nullable = false, length = 64)
 	private String etag;
 
-	@Basic(fetch = LAZY)
+	/**
+	 * The content is fetched along with the row whenever the entity is loaded — the MariaDB driver materializes a BLOB
+	 * as soon as it reads the row it belongs to, so declaring it lazy would be a promise the driver does not keep.
+	 * Anything that does not want the content selects a projection instead of the entity.
+	 */
 	@Lob
 	@Column(name = "content", columnDefinition = "longblob")
-	private Blob content;
+	private byte[] content;
 
 	@Column(name = "created", nullable = false)
 	@TimeZoneStorage(NORMALIZE)
@@ -137,15 +146,15 @@ public class StoredFileEntity {
 		return this;
 	}
 
-	public Blob getContent() {
+	public byte[] getContent() {
 		return content;
 	}
 
-	public void setContent(final Blob content) {
+	public void setContent(final byte[] content) {
 		this.content = content;
 	}
 
-	public StoredFileEntity withContent(final Blob content) {
+	public StoredFileEntity withContent(final byte[] content) {
 		this.content = content;
 		return this;
 	}
@@ -184,13 +193,13 @@ public class StoredFileEntity {
 		final StoredFileEntity that = (StoredFileEntity) o;
 		return Objects.equals(id, that.id) && Objects.equals(bucket, that.bucket) && Objects.equals(fileName, that.fileName)
 			&& Objects.equals(contentType, that.contentType) && Objects.equals(sizeInBytes, that.sizeInBytes)
-			&& Objects.equals(etag, that.etag) && Objects.equals(content, that.content) && Objects.equals(created, that.created)
+			&& Objects.equals(etag, that.etag) && Arrays.equals(content, that.content) && Objects.equals(created, that.created)
 			&& Objects.equals(expiresAt, that.expiresAt);
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(id, bucket, fileName, contentType, sizeInBytes, etag, content, created, expiresAt);
+		return Objects.hash(id, bucket, fileName, contentType, sizeInBytes, etag, Arrays.hashCode(content), created, expiresAt);
 	}
 
 	@Override
@@ -202,7 +211,7 @@ public class StoredFileEntity {
 			", contentType='" + contentType + '\'' +
 			", sizeInBytes=" + sizeInBytes +
 			", etag='" + etag + '\'' +
-			", content=" + content +
+			", content=" + (content == null ? "null" : content.length + " bytes") +
 			", created=" + created +
 			", expiresAt=" + expiresAt +
 			'}';

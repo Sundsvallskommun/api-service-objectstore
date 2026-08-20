@@ -20,21 +20,19 @@ public class CleanupWorker {
 	}
 
 	/**
-	 * Removes all objects whose expiry has passed.
+	 * Removes all objects whose expiry has passed, in a single statement — selecting them first would load the content of
+	 * every expired object into memory only to throw it away.
 	 *
 	 * @return the number of removed objects
 	 */
 	@Transactional
 	public int removeExpiredObjects() {
-		final var expiredIds = storedFileRepository.findExpiredIds(now());
+		final var removed = storedFileRepository.deleteExpired(now());
 
-		if (expiredIds.isEmpty()) {
+		if (removed == 0) {
 			LOG.debug("No expired objects to remove");
-			return 0;
 		}
 
-		storedFileRepository.deleteAllById(expiredIds);
-
-		return expiredIds.size();
+		return removed;
 	}
 }

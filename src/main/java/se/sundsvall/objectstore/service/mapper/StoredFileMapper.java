@@ -1,6 +1,5 @@
 package se.sundsvall.objectstore.service.mapper;
 
-import java.sql.Blob;
 import java.time.OffsetDateTime;
 import java.util.List;
 import se.sundsvall.objectstore.api.model.FileMetadata;
@@ -16,7 +15,7 @@ public final class StoredFileMapper {
 	private StoredFileMapper() {}
 
 	public static StoredFileEntity toStoredFileEntity(final String bucket, final String id, final String fileName,
-		final String contentType, final Long sizeInBytes, final String etag, final Blob content, final OffsetDateTime created,
+		final String contentType, final Long sizeInBytes, final String etag, final byte[] content, final OffsetDateTime created,
 		final OffsetDateTime expiresAt) {
 
 		return StoredFileEntity.create()

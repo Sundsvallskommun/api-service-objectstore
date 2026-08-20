@@ -32,6 +32,7 @@ import static org.springframework.http.MediaType.TEXT_PLAIN;
 class StorageIT extends AbstractAppTest {
 
 	private static final String BUCKET = "attachments";
+	private static final String OTHER_BUCKET = "archive";
 	private static final String EXISTING_ID = "11111111-1111-1111-1111-111111111111";
 	private static final String REMOVABLE_ID = "33333333-3333-3333-3333-333333333333";
 	private static final String MISSING_ID = "99999999-9999-9999-9999-999999999999";
@@ -176,5 +177,50 @@ class StorageIT extends AbstractAppTest {
 
 		assertThat(storedFileRepository.findByBucketAndId(BUCKET, EXISTING_ID))
 			.hasValueSatisfying(entity -> assertThat(entity.getEtag()).isEqualTo(EXISTING_ETAG));
+	}
+
+	/**
+	 * An id identifies an object only within its bucket. Storing an id that another bucket already holds adds a second,
+	 * independent object rather than moving the first one, which is what keying on the id alone would do.
+	 */
+	@Test
+	void test11_storeObjectInAnotherBucket() {
+		setupCall()
+			.withServicePath("/%s/%s".formatted(OTHER_BUCKET, EXISTING_ID))
+			.withHttpMethod(PUT)
+			.withContentType(TEXT_PLAIN)
+			.withHeader(CONTENT_DISPOSITION, "attachment; filename=\"upload.txt\"")
+			.withRequest("upload.txt")
+			.withExpectedResponseStatus(OK)
+			.withExpectedResponseHeader(ETAG, List.of(".*%s.*".formatted(UPLOADED_ETAG)))
+			.sendRequest();
+
+		assertThat(storedFileRepository.count()).isEqualTo(4);
+		assertThat(storedFileRepository.findByBucketAndId(OTHER_BUCKET, EXISTING_ID))
+			.hasValueSatisfying(entity -> assertThat(entity.getEtag()).isEqualTo(UPLOADED_ETAG));
+		assertThat(storedFileRepository.findByBucketAndId(BUCKET, EXISTING_ID))
+			.hasValueSatisfying(entity -> assertThat(entity.getEtag()).isEqualTo(EXISTING_ETAG));
+	}
+
+	/**
+	 * A create-only store of an id nothing holds goes through, and goes in through the primary key rather than through a
+	 * plain save.
+	 */
+	@Test
+	void test12_storeObjectWithCreateOnlyPreconditionWhenIdIsFree() {
+		setupCall()
+			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withHttpMethod(PUT)
+			.withContentType(TEXT_PLAIN)
+			.withHeader(IF_NONE_MATCH, "*")
+			.withHeader(CONTENT_DISPOSITION, "attachment; filename=\"upload.txt\"")
+			.withRequest("upload.txt")
+			.withExpectedResponseStatus(OK)
+			.withExpectedResponseHeader(ETAG, List.of(".*%s.*".formatted(UPLOADED_ETAG)))
+			.sendRequest();
+
+		assertThat(storedFileRepository.count()).isEqualTo(4);
+		assertThat(storedFileRepository.findByBucketAndId(BUCKET, NEW_ID))
+			.hasValueSatisfying(entity -> assertThat(entity.getEtag()).isEqualTo(UPLOADED_ETAG));
 	}
 }
