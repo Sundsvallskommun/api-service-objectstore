@@ -34,10 +34,10 @@ public class StoredFileEntity {
 	@Column(name = "id", nullable = false, updatable = false, length = 36)
 	private String id;
 
-	@Column(name = "file_name", length = 255)
+	@Column(name = "file_name")
 	private String fileName;
 
-	@Column(name = "content_type", length = 255)
+	@Column(name = "content_type")
 	private String contentType;
 
 	@Column(name = "size_in_bytes", nullable = false)

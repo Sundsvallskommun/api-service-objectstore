@@ -1,5 +1,6 @@
 package se.sundsvall.objectstore.service.scheduler;
 
+import java.time.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -14,9 +15,11 @@ public class CleanupWorker {
 	private static final Logger LOG = LoggerFactory.getLogger(CleanupWorker.class);
 
 	private final StoredFileRepository storedFileRepository;
+	private final Clock clock;
 
-	public CleanupWorker(final StoredFileRepository storedFileRepository) {
+	public CleanupWorker(final StoredFileRepository storedFileRepository, final Clock clock) {
 		this.storedFileRepository = storedFileRepository;
+		this.clock = clock;
 	}
 
 	/**
@@ -27,7 +30,7 @@ public class CleanupWorker {
 	 */
 	@Transactional
 	public int removeExpiredObjects() {
-		final var removed = storedFileRepository.deleteExpired(now());
+		final var removed = storedFileRepository.deleteExpired(now(clock));
 
 		if (removed == 0) {
 			LOG.debug("No expired objects to remove");

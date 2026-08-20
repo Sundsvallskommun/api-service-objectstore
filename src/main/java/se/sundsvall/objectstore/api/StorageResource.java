@@ -75,13 +75,13 @@ class StorageResource {
 
 	private static final String OBJECT_PATH = BUCKET_PATH + "/{id}";
 
-	private static final String BUCKET_MESSAGE = "not a valid bucket name";
+	private static final String INVALID_BUCKET_MESSAGE = "not a valid bucket name";
 
 	/**
 	 * An expiry that has already passed would store an object that is invisible to the very next read, so it is refused
 	 * rather than honoured.
 	 */
-	private static final String EXPIRES_AT_MESSAGE = "not a point in time in the future";
+	private static final String INVALID_EXPIRES_AT_MESSAGE = "not a point in time in the future";
 
 	/**
 	 * The largest page a listing returns, matching the page size of the S3 ListObjectsV2 call.
@@ -110,7 +110,7 @@ class StorageResource {
 		})
 	ResponseEntity<FileMetadata> storeObject(
 		final HttpServletRequest request,
-		@Parameter(name = "bucket", description = "Bucket name", example = "attachments") @PathVariable @Pattern(regexp = BUCKET_PATTERN, message = BUCKET_MESSAGE) final String bucket,
+		@Parameter(name = "bucket", description = "Bucket name", example = "attachments") @PathVariable @Pattern(regexp = BUCKET_PATTERN, message = INVALID_BUCKET_MESSAGE) final String bucket,
 		@Parameter(name = "id", description = "Object id, chosen by the client", example = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b") @PathVariable @ValidUuid final String id,
 		@Parameter(hidden = true) @RequestHeader(value = CONTENT_TYPE, required = false) final String contentType,
 		@Parameter(name = CONTENT_DISPOSITION, description = "The name of the file is taken from the filename parameter of this header", example = "attachment; filename=\"invoice-123.pdf\"") @RequestHeader(
@@ -121,7 +121,7 @@ class StorageResource {
 			example = "*") @RequestHeader(value = IF_NONE_MATCH, required = false) final String ifNoneMatch,
 		@Parameter(name = "expiresAt",
 			description = "Point in time when the object expires. Must be in the future. Defaults to the configured time to live.",
-			example = "2026-08-25T14:30:00+02:00") @RequestParam(required = false) @Future(message = EXPIRES_AT_MESSAGE) @DateTimeFormat(
+			example = "2026-08-25T14:30:00+02:00") @RequestParam(required = false) @Future(message = INVALID_EXPIRES_AT_MESSAGE) @DateTimeFormat(
 				iso = DATE_TIME) final OffsetDateTime expiresAt) {
 
 		final var metadata = storageService.store(bucket, id, contentType, contentDisposition, ifNoneMatch, expiresAt, request);
@@ -136,7 +136,7 @@ class StorageResource {
 			@ApiResponse(responseCode = "200", description = "Successful operation", useReturnTypeSchema = true)
 		})
 	ResponseEntity<ObjectListing> listObjects(
-		@Parameter(name = "bucket", description = "Bucket name", example = "attachments") @PathVariable @Pattern(regexp = BUCKET_PATTERN, message = BUCKET_MESSAGE) final String bucket,
+		@Parameter(name = "bucket", description = "Bucket name", example = "attachments") @PathVariable @Pattern(regexp = BUCKET_PATTERN, message = INVALID_BUCKET_MESSAGE) final String bucket,
 		@Parameter(name = "continuationToken",
 			description = "Token returned by the previous page. Omit to start from the beginning.",
 			example = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b") @RequestParam(required = false) @ValidUuid(nullable = true) final String continuationToken,
@@ -165,7 +165,7 @@ class StorageResource {
 		})
 	void readObject(
 		final HttpServletResponse response,
-		@Parameter(name = "bucket", description = "Bucket name", example = "attachments") @PathVariable @Pattern(regexp = BUCKET_PATTERN, message = BUCKET_MESSAGE) final String bucket,
+		@Parameter(name = "bucket", description = "Bucket name", example = "attachments") @PathVariable @Pattern(regexp = BUCKET_PATTERN, message = INVALID_BUCKET_MESSAGE) final String bucket,
 		@Parameter(name = "id", description = "Object id", example = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b") @PathVariable @ValidUuid final String id,
 		@Parameter(name = IF_NONE_MATCH, description = "Entity tag the client already holds", example = "\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\"") @RequestHeader(value = IF_NONE_MATCH,
 			required = false) final String ifNoneMatch) {
@@ -178,7 +178,7 @@ class StorageResource {
 		@ApiResponse(responseCode = "204", description = "Successful operation", useReturnTypeSchema = true)
 	})
 	ResponseEntity<Void> deleteObject(
-		@Parameter(name = "bucket", description = "Bucket name", example = "attachments") @PathVariable @Pattern(regexp = BUCKET_PATTERN, message = BUCKET_MESSAGE) final String bucket,
+		@Parameter(name = "bucket", description = "Bucket name", example = "attachments") @PathVariable @Pattern(regexp = BUCKET_PATTERN, message = INVALID_BUCKET_MESSAGE) final String bucket,
 		@Parameter(name = "id", description = "Object id", example = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b") @PathVariable @ValidUuid final String id) {
 
 		storageService.delete(bucket, id);

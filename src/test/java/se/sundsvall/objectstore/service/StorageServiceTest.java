@@ -2,8 +2,11 @@ package se.sundsvall.objectstore.service;
 
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -30,11 +33,8 @@ import se.sundsvall.objectstore.integration.db.model.StoredFileEntity;
 import se.sundsvall.objectstore.integration.db.model.StoredFileSummary;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.time.OffsetDateTime.now;
-import static java.time.temporal.ChronoUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -62,6 +62,13 @@ class StorageServiceTest {
 	private static final byte[] CONTENT = "file-content".getBytes(UTF_8);
 
 	/**
+	 * The clock is injected rather than read from the static factory methods, so a test can fix it and assert on exact
+	 * timestamps instead of on a tolerance around the wall clock.
+	 */
+	private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-08-20T12:00:00Z"), ZoneOffset.UTC);
+	private static final OffsetDateTime NOW = OffsetDateTime.now(CLOCK);
+
+	/**
 	 * The SHA-256 digest of {@link #CONTENT}, verifiable with {@code printf 'file-content' | shasum -a 256}.
 	 */
 	private static final String ETAG_VALUE = "2239ce4df9ee8db012834642ec801b55ba2c92b28bdd11f4d73d9c55d39f3b0a";
@@ -77,7 +84,7 @@ class StorageServiceTest {
 	}
 
 	private StorageService serviceWith(final Duration timeToLive, final DataSize maxObjectSize) {
-		return new StorageService(storedFileRepositoryMock, new StorageProperties(timeToLive, maxObjectSize));
+		return new StorageService(storedFileRepositoryMock, new StorageProperties(timeToLive, maxObjectSize), CLOCK);
 	}
 
 	private static MockHttpServletRequest requestWith(final byte[] content) {
@@ -91,7 +98,7 @@ class StorageServiceTest {
 	}
 
 	private static StoredFileSummary summary(final String id, final String fileName, final String contentType, final OffsetDateTime expiresAt) {
-		return new StoredFileSummary(id, BUCKET, fileName, contentType, (long) CONTENT.length, ETAG_VALUE, now(), expiresAt);
+		return new StoredFileSummary(id, BUCKET, fileName, contentType, (long) CONTENT.length, ETAG_VALUE, NOW, expiresAt);
 	}
 
 	@Test
@@ -109,13 +116,13 @@ class StorageServiceTest {
 		final var captured = entityCaptor.getValue();
 		assertThat(captured.getId()).isEqualTo(ID);
 		assertThat(captured.getBucket()).isEqualTo(BUCKET);
-		assertThat(captured.getCreated()).isCloseTo(now(), within(5, SECONDS));
+		assertThat(captured.getCreated()).isEqualTo(NOW);
 		assertThat(captured.getFileName()).isEqualTo(FILE_NAME);
 		assertThat(captured.getContentType()).isEqualTo("application/pdf");
 		assertThat(captured.getSizeInBytes()).isEqualTo(CONTENT.length);
 		assertThat(captured.getEtag()).isEqualTo(ETAG_VALUE);
 		assertThat(captured.getContent()).isEqualTo(CONTENT);
-		assertThat(captured.getExpiresAt()).isCloseTo(now().plusDays(7), within(5, SECONDS));
+		assertThat(captured.getExpiresAt()).isEqualTo(NOW.plusDays(7));
 
 		assertThat(result.getId()).isEqualTo(ID);
 		assertThat(result.getEtag()).isEqualTo(ETAG_VALUE);
@@ -126,7 +133,7 @@ class StorageServiceTest {
 	void storeWithExplicitExpiry() {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
-		final var expiresAt = now().plusHours(2);
+		final var expiresAt = NOW.plusHours(2);
 
 		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -372,7 +379,7 @@ class StorageServiceTest {
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
 
-		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, FILE_NAME, "application/pdf", now().plusDays(1))));
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, FILE_NAME, "application/pdf", NOW.plusDays(1))));
 		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);
 
 		// Act
@@ -468,7 +475,7 @@ class StorageServiceTest {
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
 
-		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, FILE_NAME, "application/pdf", now().minusSeconds(1))));
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, FILE_NAME, "application/pdf", NOW.minusSeconds(1))));
 
 		// Act & Assert
 		assertThatThrownBy(() -> service.readTo(BUCKET, ID, null, response))

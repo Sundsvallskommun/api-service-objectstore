@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
 import org.slf4j.Logger;
@@ -83,10 +84,12 @@ public class StorageService {
 
 	private final StoredFileRepository storedFileRepository;
 	private final StorageProperties storageProperties;
+	private final Clock clock;
 
-	public StorageService(final StoredFileRepository storedFileRepository, final StorageProperties storageProperties) {
+	public StorageService(final StoredFileRepository storedFileRepository, final StorageProperties storageProperties, final Clock clock) {
 		this.storedFileRepository = storedFileRepository;
 		this.storageProperties = storageProperties;
+		this.clock = clock;
 	}
 
 	/**
@@ -114,9 +117,13 @@ public class StorageService {
 
 		final var createOnly = isCreateOnly(ifNoneMatch);
 
+		// One reading of the clock for the whole store, so that the expiry an object is checked against, the moment it
+		// records as its creation and the expiry it is given are all the same point in time rather than three.
+		final var timestamp = now(clock);
+
 		// Refusing here rather than after the read keeps a store that is going to be refused from pulling its content
 		// across the wire. It is not what makes the refusal correct — the primary key does that, below.
-		if (createOnly && storedFileRepository.existsUnexpired(bucket, id, now())) {
+		if (createOnly && storedFileRepository.existsUnexpired(bucket, id, timestamp)) {
 			throw Problem.valueOf(PRECONDITION_FAILED, ERROR_ALREADY_EXISTS.formatted(id, bucket));
 		}
 
@@ -127,10 +134,10 @@ public class StorageService {
 		}
 
 		final var entity = toStoredFileEntity(bucket, id, toFileName(contentDisposition), contentType, (long) content.length,
-			toEtag(content), content, now(), toExpiry(expiresAt));
+			toEtag(content), content, timestamp, toExpiry(expiresAt, timestamp));
 
 		if (createOnly) {
-			return toFileMetadata(createExclusively(entity));
+			return toFileMetadata(createExclusively(entity, timestamp));
 		}
 
 		return toFileMetadata(storedFileRepository.save(entity));
@@ -184,7 +191,7 @@ public class StorageService {
 	 */
 	@Transactional(readOnly = true)
 	public ObjectListing list(final String bucket, final String continuationToken, final int maxKeys) {
-		final var page = storedFileRepository.findPage(bucket, ofNullable(continuationToken).orElse(""), now(), Limit.of(maxKeys + 1));
+		final var page = storedFileRepository.findPage(bucket, ofNullable(continuationToken).orElse(""), now(clock), Limit.of(maxKeys + 1));
 
 		return toObjectListing(page.stream().limit(maxKeys).toList(), page.size() > maxKeys);
 	}
@@ -205,12 +212,13 @@ public class StorageService {
 	 * Stores an object that no other store may already have stored under the same id, translating the refusal the
 	 * database hands back into the status a client sent a create-only precondition to get.
 	 *
-	 * @param  entity the object to store
-	 * @return        the stored object
+	 * @param  entity    the object to store
+	 * @param  timestamp the point in time to compare the expiry of any object already stored under the id against
+	 * @return           the stored object
 	 */
-	private StoredFileEntity createExclusively(final StoredFileEntity entity) {
+	private StoredFileEntity createExclusively(final StoredFileEntity entity, final OffsetDateTime timestamp) {
 		try {
-			storedFileRepository.createExclusively(entity, now());
+			storedFileRepository.createExclusively(entity, timestamp);
 		} catch (final DataIntegrityViolationException e) {
 			throw Problem.valueOf(PRECONDITION_FAILED, ERROR_ALREADY_EXISTS.formatted(entity.getId(), entity.getBucket()));
 		}
@@ -239,20 +247,20 @@ public class StorageService {
 
 	private StoredFileSummary findExisting(final String bucket, final String id) {
 		return storedFileRepository.findSummary(bucket, id)
-			.filter(not(StorageService::isExpired))
+			.filter(not(this::isExpired))
 			.orElseThrow(() -> Problem.valueOf(NOT_FOUND, ERROR_NOT_FOUND.formatted(id, bucket)));
 	}
 
-	private static boolean isExpired(final StoredFileSummary summary) {
+	private boolean isExpired(final StoredFileSummary summary) {
 		return ofNullable(summary.expiresAt())
-			.map(expiry -> expiry.isBefore(now()))
+			.map(expiry -> expiry.isBefore(now(clock)))
 			.orElse(false);
 	}
 
-	private OffsetDateTime toExpiry(final OffsetDateTime expiresAt) {
+	private OffsetDateTime toExpiry(final OffsetDateTime expiresAt, final OffsetDateTime timestamp) {
 		return ofNullable(expiresAt)
 			.orElseGet(() -> ofNullable(storageProperties.defaultTimeToLive())
-				.map(now()::plus)
+				.map(timestamp::plus)
 				.orElse(null));
 	}
 
