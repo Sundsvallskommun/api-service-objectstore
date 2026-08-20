@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.constraints.Future;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Pattern;
@@ -77,6 +78,12 @@ class StorageResource {
 	private static final String BUCKET_MESSAGE = "not a valid bucket name";
 
 	/**
+	 * An expiry that has already passed would store an object that is invisible to the very next read, so it is refused
+	 * rather than honoured.
+	 */
+	private static final String EXPIRES_AT_MESSAGE = "not a point in time in the future";
+
+	/**
 	 * The largest page a listing returns, matching the page size of the S3 ListObjectsV2 call.
 	 */
 	private static final String MAX_KEYS_DEFAULT = "1000";
@@ -112,8 +119,10 @@ class StorageResource {
 		@Parameter(name = IF_NONE_MATCH,
 			description = "Send a wildcard to refuse the store with a 412 rather than overwrite an object already held under the id. No other value is accepted.",
 			example = "*") @RequestHeader(value = IF_NONE_MATCH, required = false) final String ifNoneMatch,
-		@Parameter(name = "expiresAt", description = "Point in time when the object expires. Defaults to the configured time to live.", example = "2026-08-25T14:30:00+02:00") @RequestParam(required = false) @DateTimeFormat(
-			iso = DATE_TIME) final OffsetDateTime expiresAt) {
+		@Parameter(name = "expiresAt",
+			description = "Point in time when the object expires. Must be in the future. Defaults to the configured time to live.",
+			example = "2026-08-25T14:30:00+02:00") @RequestParam(required = false) @Future(message = EXPIRES_AT_MESSAGE) @DateTimeFormat(
+				iso = DATE_TIME) final OffsetDateTime expiresAt) {
 
 		final var metadata = storageService.store(bucket, id, contentType, contentDisposition, ifNoneMatch, expiresAt, request);
 

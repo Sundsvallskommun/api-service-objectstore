@@ -8,7 +8,6 @@ import jakarta.persistence.Index;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
-import java.util.Arrays;
 import java.util.Objects;
 import org.hibernate.annotations.TimeZoneStorage;
 
@@ -185,21 +184,24 @@ public class StoredFileEntity {
 		return this;
 	}
 
+	/**
+	 * Two entities are the same object when they carry the same key, which is what identity means for a row. Comparing
+	 * the remaining columns as well would make an entity stop being equal to itself the moment anything about it is
+	 * changed, and would put the whole content of an object through equals and hashCode to answer a question the key
+	 * already answers.
+	 */
 	@Override
 	public boolean equals(final Object o) {
 		if (o == null || getClass() != o.getClass()) {
 			return false;
 		}
 		final StoredFileEntity that = (StoredFileEntity) o;
-		return Objects.equals(id, that.id) && Objects.equals(bucket, that.bucket) && Objects.equals(fileName, that.fileName)
-			&& Objects.equals(contentType, that.contentType) && Objects.equals(sizeInBytes, that.sizeInBytes)
-			&& Objects.equals(etag, that.etag) && Arrays.equals(content, that.content) && Objects.equals(created, that.created)
-			&& Objects.equals(expiresAt, that.expiresAt);
+		return Objects.equals(bucket, that.bucket) && Objects.equals(id, that.id);
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(id, bucket, fileName, contentType, sizeInBytes, etag, Arrays.hashCode(content), created, expiresAt);
+		return Objects.hash(bucket, id);
 	}
 
 	@Override

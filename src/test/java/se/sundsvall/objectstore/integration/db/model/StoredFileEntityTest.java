@@ -7,8 +7,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanConstructor;
-import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanEquals;
-import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanHashCode;
+import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanEqualsExcluding;
+import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanHashCodeExcluding;
 import static com.google.code.beanmatchers.BeanMatchers.hasValidBeanToStringExcluding;
 import static com.google.code.beanmatchers.BeanMatchers.hasValidGettersAndSetters;
 import static com.google.code.beanmatchers.BeanMatchers.registerValueGenerator;
@@ -18,6 +18,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.CoreMatchers.allOf;
 
 class StoredFileEntityTest {
+
+	private static final String[] NON_KEY_PROPERTIES = {
+		"fileName", "contentType", "sizeInBytes", "etag", "content", "created", "expiresAt"
+	};
 
 	@BeforeAll
 	static void setup() {
@@ -30,17 +34,35 @@ class StoredFileEntityTest {
 	}
 
 	/**
-	 * The content is excluded from the toString assertion because toString reports its size rather than its bytes —
-	 * anything else would put an entire object into every log line that mentions the entity.
+	 * Everything but the key is excluded from equals and hashCode, which compare identity rather than state, and the
+	 * content is excluded from toString, which reports its size rather than its bytes — anything else would put an
+	 * entire object into every log line that mentions the entity.
 	 */
 	@Test
 	void testBean() {
 		MatcherAssert.assertThat(StoredFileEntity.class, allOf(
 			hasValidBeanConstructor(),
 			hasValidGettersAndSetters(),
-			hasValidBeanHashCode(),
-			hasValidBeanEquals(),
+			hasValidBeanHashCodeExcluding(NON_KEY_PROPERTIES),
+			hasValidBeanEqualsExcluding(NON_KEY_PROPERTIES),
 			hasValidBeanToStringExcluding("content")));
+	}
+
+	/**
+	 * A stored object stays the same object when its content is replaced, since a store to an id that already holds one
+	 * replaces it in place rather than producing a second object.
+	 */
+	@Test
+	void testIdentityIsTheKeyAlone() {
+		// Arrange
+		final var one = StoredFileEntity.create().withBucket("attachments").withId("0e2b7b3a-2a3e-4b7e-9c37-5f5e1a6b3e10")
+			.withEtag("one").withContent("one".getBytes(UTF_8));
+		final var other = StoredFileEntity.create().withBucket("attachments").withId("0e2b7b3a-2a3e-4b7e-9c37-5f5e1a6b3e10")
+			.withEtag("other").withContent("other".getBytes(UTF_8));
+
+		// Assert
+		assertThat(one).isEqualTo(other).hasSameHashCodeAs(other);
+		assertThat(one).isNotEqualTo(StoredFileEntity.create().withBucket("archive").withId("0e2b7b3a-2a3e-4b7e-9c37-5f5e1a6b3e10"));
 	}
 
 	@Test

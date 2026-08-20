@@ -87,6 +87,32 @@ class StorageResourceFailureTest {
 		verifyNoInteractions(storageServiceMock);
 	}
 
+	/**
+	 * An expiry that has already passed would store an object that is invisible to the very next read, so it is refused
+	 * rather than honoured.
+	 */
+	@Test
+	void storeObjectWithExpiryInThePast() {
+		// Act
+		final var response = webTestClient.put()
+			.uri(builder -> builder.path("/{bucket}/{id}").queryParam("expiresAt", "2020-01-01T00:00:00Z").build(Map.of("bucket", BUCKET, "id", ID)))
+			.contentType(APPLICATION_OCTET_STREAM)
+			.bodyValue(CONTENT)
+			.exchange()
+			.expectStatus().isBadRequest()
+			.expectBody(ConstraintViolationProblem.class)
+			.returnResult()
+			.getResponseBody();
+
+		// Assert
+		assertThat(response).isNotNull();
+		assertThat(response.getViolations())
+			.extracting(Violation::field, Violation::message)
+			.containsExactly(tuple("storeObject.expiresAt", "not a point in time in the future"));
+
+		verifyNoInteractions(storageServiceMock);
+	}
+
 	@Test
 	void listObjectsWithInvalidContinuationToken() {
 		// Act

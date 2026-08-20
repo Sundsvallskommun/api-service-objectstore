@@ -7,7 +7,7 @@ info:
     url: https://opensource.org/licenses/MIT
   version: "1.0"
 servers:
-- url: http://localhost:52803
+- url: http://localhost:53260
   description: Generated server url
 tags:
 - name: Storage
@@ -125,8 +125,8 @@ paths:
         example: '*'
       - name: expiresAt
         in: query
-        description: Point in time when the object expires. Defaults to the configured
-          time to live.
+        description: Point in time when the object expires. Must be in the future.
+          Defaults to the configured time to live.
         required: false
         schema:
           type: string
@@ -336,10 +336,10 @@ components:
             $ref: "#/components/schemas/Violation"
         title:
           type: string
-        causeAsProblem:
-          $ref: "#/components/schemas/ThrowableProblem"
         detail:
           type: string
+        causeAsProblem:
+          $ref: "#/components/schemas/ThrowableProblem"
         instance:
           type: string
           format: uri
