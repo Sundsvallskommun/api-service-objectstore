@@ -1,0 +1,5 @@
+{
+	"title": "Bad Request",
+	"status": 400,
+	"detail": "Content-Type is not a media type that can be stored"
+}

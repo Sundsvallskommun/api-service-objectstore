@@ -8,11 +8,14 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Limit;
 import org.springframework.http.ContentDisposition;
+import org.springframework.http.InvalidMediaTypeException;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import se.sundsvall.dept44.problem.Problem;
@@ -26,6 +29,7 @@ import se.sundsvall.objectstore.integration.db.model.StoredFileSummary;
 import static jakarta.servlet.http.HttpServletResponse.SC_NOT_MODIFIED;
 import static java.lang.Math.min;
 import static java.lang.Math.toIntExact;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.time.OffsetDateTime.now;
 import static java.util.Arrays.stream;
 import static java.util.Optional.ofNullable;
@@ -56,7 +60,7 @@ public class StorageService {
 	private static final String ERROR_READ_UPLOAD = "Could not read the content of the uploaded file";
 	private static final String ERROR_READ_CONTENT = "Could not read content of object with id [%s] in bucket [%s]";
 	private static final String ERROR_DIGEST = "Could not compute the digest of the uploaded file";
-	private static final String CONTENT_DISPOSITION_VALUE = "attachment; filename=\"%s\"";
+	private static final String ERROR_INVALID_CONTENT_TYPE = "Content-Type is not a media type that can be stored";
 
 	private static final String DIGEST_ALGORITHM = "SHA-256";
 
@@ -81,6 +85,11 @@ public class StorageService {
 	private static final String FILE_NAME_DIRECTORY_REGEX = ".*[/\\\\]";
 	private static final String FILE_NAME_ILLEGAL_CHARACTER_REGEX = "[\\p{Cntrl}\"\\\\]";
 	private static final int FILE_NAME_MAX_LENGTH = 255;
+
+	/**
+	 * The longest content type that can be stored, matching the column holding it.
+	 */
+	private static final int CONTENT_TYPE_MAX_LENGTH = 255;
 
 	private final StoredFileRepository storedFileRepository;
 	private final StorageProperties storageProperties;
@@ -116,6 +125,8 @@ public class StorageService {
 		final String ifNoneMatch, final OffsetDateTime expiresAt, final HttpServletRequest request) {
 
 		final var createOnly = isCreateOnly(ifNoneMatch);
+		final var storedContentType = toContentType(contentType);
+		final var canonicalId = toCanonicalId(id);
 
 		// One reading of the clock for the whole store, so that the expiry an object is checked against, the moment it
 		// records as its creation and the expiry it is given are all the same point in time rather than three.
@@ -123,8 +134,8 @@ public class StorageService {
 
 		// Refusing here rather than after the read keeps a store that is going to be refused from pulling its content
 		// across the wire. It is not what makes the refusal correct — the primary key does that, below.
-		if (createOnly && storedFileRepository.existsUnexpired(bucket, id, timestamp)) {
-			throw Problem.valueOf(PRECONDITION_FAILED, ERROR_ALREADY_EXISTS.formatted(id, bucket));
+		if (createOnly && storedFileRepository.existsUnexpired(bucket, canonicalId, timestamp)) {
+			throw Problem.valueOf(PRECONDITION_FAILED, ERROR_ALREADY_EXISTS.formatted(canonicalId, bucket));
 		}
 
 		final var content = readContent(request);
@@ -133,7 +144,7 @@ public class StorageService {
 			throw Problem.valueOf(BAD_REQUEST, ERROR_EMPTY_CONTENT);
 		}
 
-		final var entity = toStoredFileEntity(bucket, id, toFileName(contentDisposition), contentType, (long) content.length,
+		final var entity = toStoredFileEntity(bucket, canonicalId, toFileName(contentDisposition), storedContentType, (long) content.length,
 			toEtag(content), content, timestamp, toExpiry(expiresAt, timestamp));
 
 		if (createOnly) {
@@ -156,7 +167,8 @@ public class StorageService {
 	 * @param response    the response to write to
 	 */
 	public void readTo(final String bucket, final String id, final String ifNoneMatch, final HttpServletResponse response) {
-		final var summary = findExisting(bucket, id);
+		final var canonicalId = toCanonicalId(id);
+		final var summary = findExisting(bucket, canonicalId);
 
 		response.addHeader(ETAG, "\"%s\"".formatted(summary.etag()));
 
@@ -165,18 +177,18 @@ public class StorageService {
 			return;
 		}
 
-		final var content = ofNullable(storedFileRepository.findContent(bucket, id))
-			.orElseThrow(() -> Problem.valueOf(NOT_FOUND, ERROR_NOT_FOUND.formatted(id, bucket)));
+		final var content = ofNullable(storedFileRepository.findContent(bucket, canonicalId))
+			.orElseThrow(() -> Problem.valueOf(NOT_FOUND, ERROR_NOT_FOUND.formatted(canonicalId, bucket)));
 
 		try {
 			response.addHeader(CONTENT_TYPE, ofNullable(summary.contentType()).orElse(APPLICATION_OCTET_STREAM_VALUE));
-			response.addHeader(CONTENT_DISPOSITION, CONTENT_DISPOSITION_VALUE.formatted(ofNullable(summary.fileName()).orElse(summary.id())));
+			response.addHeader(CONTENT_DISPOSITION, toContentDisposition(summary));
 			response.setContentLength(content.length);
 
 			response.getOutputStream().write(content);
 		} catch (final IOException e) {
-			LOG.warn("Failed to write content of object with id [{}] in bucket [{}]", id, bucket, e);
-			throw Problem.valueOf(INTERNAL_SERVER_ERROR, ERROR_READ_CONTENT.formatted(id, bucket));
+			LOG.warn("Failed to write content of object with id [{}] in bucket [{}]", canonicalId, bucket, e);
+			throw Problem.valueOf(INTERNAL_SERVER_ERROR, ERROR_READ_CONTENT.formatted(canonicalId, bucket));
 		}
 	}
 
@@ -191,7 +203,8 @@ public class StorageService {
 	 */
 	@Transactional(readOnly = true)
 	public ObjectListing list(final String bucket, final String continuationToken, final int maxKeys) {
-		final var page = storedFileRepository.findPage(bucket, ofNullable(continuationToken).orElse(""), now(clock), Limit.of(maxKeys + 1));
+		final var page = storedFileRepository.findPage(bucket, ofNullable(continuationToken).map(StorageService::toCanonicalId).orElse(""),
+			now(clock), Limit.of(maxKeys + 1));
 
 		return toObjectListing(page.stream().limit(maxKeys).toList(), page.size() > maxKeys);
 	}
@@ -205,7 +218,7 @@ public class StorageService {
 	 */
 	@Transactional
 	public void delete(final String bucket, final String id) {
-		storedFileRepository.deleteByBucketAndId(bucket, id);
+		storedFileRepository.deleteByBucketAndId(bucket, toCanonicalId(id));
 	}
 
 	/**
@@ -243,6 +256,63 @@ public class StorageService {
 				return true;
 			})
 			.orElse(false);
+	}
+
+	/**
+	 * Canonicalizes the id an object is addressed by. A UUID carries no case, so an id that differs only in case from one
+	 * already stored names the same object and is lowercased to say so. Without it the two would be separate objects, and
+	 * the object a client stored under an uppercase id would be invisible to a read that spelled the id in lowercase.
+	 *
+	 * @param  id the id sent by the client
+	 * @return    the id the object is stored under
+	 */
+	private static String toCanonicalId(final String id) {
+		return id.toLowerCase(Locale.ROOT);
+	}
+
+	/**
+	 * Reads the Content-Type header of a store. The value is replayed as the content type of every later read, so one
+	 * that cannot be stored whole is refused rather than truncated or dropped — a client that is told its object was
+	 * stored is entitled to get the type it sent back, and both alternatives quietly hand back a different one.
+	 *
+	 * @param  contentType the header sent by the client, or null
+	 * @return             the content type to store, or null when the client sent none
+	 */
+	private static String toContentType(final String contentType) {
+		return ofNullable(contentType)
+			.map(String::strip)
+			.filter(not(String::isEmpty))
+			.map(value -> {
+				if ((value.length() > CONTENT_TYPE_MAX_LENGTH) || !isMediaType(value)) {
+					throw Problem.valueOf(BAD_REQUEST, ERROR_INVALID_CONTENT_TYPE);
+				}
+				return value;
+			})
+			.orElse(null);
+	}
+
+	private static boolean isMediaType(final String value) {
+		try {
+			MediaType.parseMediaType(value);
+			return true;
+		} catch (final InvalidMediaTypeException e) {
+			return false;
+		}
+	}
+
+	/**
+	 * Names the file a read returns, encoded the way RFC 6266 asks for rather than written into the header as it stands.
+	 * A response header is written as ISO-8859-1, and a name carrying anything outside it makes the container drop the
+	 * whole header, leaving the client with no name at all rather than an approximate one.
+	 *
+	 * @param  summary the metadata of the object being read
+	 * @return         the value of the Content-Disposition header
+	 */
+	private static String toContentDisposition(final StoredFileSummary summary) {
+		return ContentDisposition.attachment()
+			.filename(ofNullable(summary.fileName()).orElse(summary.id()), UTF_8)
+			.build()
+			.toString();
 	}
 
 	private StoredFileSummary findExisting(final String bucket, final String id) {

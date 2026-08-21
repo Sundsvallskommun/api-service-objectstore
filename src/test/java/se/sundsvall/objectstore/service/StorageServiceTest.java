@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
@@ -387,7 +389,7 @@ class StorageServiceTest {
 
 		// Assert
 		assertThat(response.getHeader(CONTENT_TYPE)).isEqualTo("application/pdf");
-		assertThat(response.getHeader(CONTENT_DISPOSITION)).isEqualTo("attachment; filename=\"invoice-123.pdf\"");
+		assertThat(response.getHeader(CONTENT_DISPOSITION)).isEqualTo("attachment; filename=\"invoice-123.pdf\"; filename*=UTF-8''invoice-123.pdf");
 		assertThat(response.getHeader(ETAG)).isEqualTo("\"%s\"".formatted(ETAG_VALUE));
 		assertThat(response.getContentAsByteArray()).isEqualTo(CONTENT);
 	}
@@ -406,7 +408,7 @@ class StorageServiceTest {
 
 		// Assert
 		assertThat(response.getHeader(CONTENT_TYPE)).isEqualTo("application/octet-stream");
-		assertThat(response.getHeader(CONTENT_DISPOSITION)).isEqualTo("attachment; filename=\"%s\"".formatted(ID));
+		assertThat(response.getHeader(CONTENT_DISPOSITION)).isEqualTo("attachment; filename=\"%s\"; filename*=UTF-8''%s".formatted(ID, ID));
 	}
 
 	/**
@@ -606,5 +608,147 @@ class StorageServiceTest {
 		// Assert
 		verify(storedFileRepositoryMock).deleteByBucketAndId(BUCKET, ID);
 		verifyNoMoreInteractions(storedFileRepositoryMock);
+	}
+
+	/**
+	 * A UUID carries no case, so an id spelled in a different case names the object already stored rather than a second
+	 * one. The id is lowercased on the way in, and the metadata that comes back carries the id the object is stored
+	 * under rather than the one the client happened to type.
+	 */
+	@Test
+	void storeCanonicalizesTheId() {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+
+		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		// Act
+		final var result = service.store(BUCKET, ID.toUpperCase(Locale.ROOT), "application/pdf", DISPOSITION, null, null, requestWith(CONTENT));
+
+		// Assert
+		verify(storedFileRepositoryMock).save(entityCaptor.capture());
+		assertThat(entityCaptor.getValue().getId()).isEqualTo(ID);
+		assertThat(result.getId()).isEqualTo(ID);
+	}
+
+	@Test
+	void readToCanonicalizesTheId() {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+		final var response = new MockHttpServletResponse();
+
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID)));
+		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);
+
+		// Act
+		service.readTo(BUCKET, ID.toUpperCase(Locale.ROOT), null, response);
+
+		// Assert
+		assertThat(response.getContentAsByteArray()).isEqualTo(CONTENT);
+		verify(storedFileRepositoryMock).findSummary(BUCKET, ID);
+		verify(storedFileRepositoryMock).findContent(BUCKET, ID);
+	}
+
+	@Test
+	void deleteCanonicalizesTheId() {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+
+		when(storedFileRepositoryMock.deleteByBucketAndId(BUCKET, ID)).thenReturn(1);
+
+		// Act
+		service.delete(BUCKET, ID.toUpperCase(Locale.ROOT));
+
+		// Assert
+		verify(storedFileRepositoryMock).deleteByBucketAndId(BUCKET, ID);
+		verifyNoMoreInteractions(storedFileRepositoryMock);
+	}
+
+	/**
+	 * The token is an id of the page before it, so it is canonicalized the same way — otherwise a page fetched with the
+	 * token spelled in another case would start somewhere else in the bucket.
+	 */
+	@Test
+	void listCanonicalizesTheContinuationToken() {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+
+		when(storedFileRepositoryMock.findPage(eq(BUCKET), eq(ID), any(), any())).thenReturn(List.of());
+
+		// Act
+		service.list(BUCKET, ID.toUpperCase(Locale.ROOT), 10);
+
+		// Assert
+		verify(storedFileRepositoryMock).findPage(eq(BUCKET), eq(ID), any(), any());
+	}
+
+	/**
+	 * The content type is replayed as the content type of every later read, so one that cannot be stored whole is
+	 * refused rather than truncated or dropped — both of those hand the client back a type it never sent.
+	 */
+	@ParameterizedTest
+	@MethodSource("unusableContentTypeArguments")
+	void storeWithUnusableContentType(final String contentType) {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+
+		// Act & Assert
+		assertThatThrownBy(() -> service.store(BUCKET, ID, contentType, DISPOSITION, null, null, requestWith(CONTENT)))
+			.isInstanceOf(Problem.class)
+			.hasMessageContaining("Content-Type is not a media type that can be stored")
+			.extracting("status").isEqualTo(BAD_REQUEST);
+
+		verifyNoInteractions(storedFileRepositoryMock);
+	}
+
+	private static Stream<Arguments> unusableContentTypeArguments() {
+		return Stream.of(
+			Arguments.of("text/plain;charset=utf-8;x=" + "a".repeat(300)),
+			Arguments.of("not a media type"),
+			Arguments.of("text/"),
+			Arguments.of("/plain"));
+	}
+
+	/**
+	 * A client that sends no content type at all, or nothing but whitespace, stores none — reads then fall back to
+	 * naming the object as a stream of bytes.
+	 */
+	@ParameterizedTest
+	@NullSource
+	@ValueSource(strings = {
+		"", "   "
+	})
+	void storeWithoutContentType(final String contentType) {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+
+		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		// Act
+		final var result = service.store(BUCKET, ID, contentType, DISPOSITION, null, null, requestWith(CONTENT));
+
+		// Assert
+		assertThat(result.getContentType()).isNull();
+	}
+
+	/**
+	 * A response header is written as ISO-8859-1, so a file name carrying anything outside it is encoded rather than
+	 * written as it stands — a container drops the whole header otherwise, leaving the client with no name at all.
+	 */
+	@Test
+	void readToEncodesAFileNameThatIsNotLatin1() {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+		final var response = new MockHttpServletResponse();
+
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, "räkning-€.pdf", "application/pdf", null)));
+		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);
+
+		// Act
+		service.readTo(BUCKET, ID, null, response);
+
+		// Assert
+		assertThat(response.getHeader(CONTENT_DISPOSITION))
+			.isEqualTo("attachment; filename=\"räkning-_.pdf\"; filename*=UTF-8''r%C3%A4kning-%E2%82%AC.pdf");
 	}
 }

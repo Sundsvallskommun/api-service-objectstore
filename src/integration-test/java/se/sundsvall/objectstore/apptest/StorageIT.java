@@ -1,6 +1,9 @@
 package se.sundsvall.objectstore.apptest;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.jdbc.Sql;
@@ -11,6 +14,7 @@ import se.sundsvall.objectstore.integration.db.StoredFileRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.http.HttpHeaders.CONTENT_DISPOSITION;
+import static org.springframework.http.HttpHeaders.CONTENT_TYPE;
 import static org.springframework.http.HttpHeaders.ETAG;
 import static org.springframework.http.HttpHeaders.IF_NONE_MATCH;
 import static org.springframework.http.HttpMethod.DELETE;
@@ -37,12 +41,16 @@ class StorageIT extends AbstractAppTest {
 	private static final String REMOVABLE_ID = "33333333-3333-3333-3333-333333333333";
 	private static final String MISSING_ID = "99999999-9999-9999-9999-999999999999";
 	private static final String NEW_ID = "44444444-4444-4444-4444-444444444444";
+	private static final String MIXED_CASE_ID = "aaaaaaa1-1111-1111-1111-11111111111a";
 	private static final String EXISTING_ETAG = "c448faf851ca35959e15384db68a45027e8ab0bd19ba4e3fae4b649338a25fa2";
 	private static final String UPLOADED_ETAG = "39ef3a7253e3e05fa992f66c0525cb2932da288e4894c0f146e2c9f55fbab22b";
 	private static final String RESPONSE_FILE = "response.json";
 
 	@Autowired
 	private StoredFileRepository storedFileRepository;
+
+	@Autowired
+	private CircuitBreakerRegistry circuitBreakerRegistry;
 
 	@Test
 	void test01_storeObject() {
@@ -222,5 +230,95 @@ class StorageIT extends AbstractAppTest {
 		assertThat(storedFileRepository.count()).isEqualTo(4);
 		assertThat(storedFileRepository.findByBucketAndId(BUCKET, NEW_ID))
 			.hasValueSatisfying(entity -> assertThat(entity.getEtag()).isEqualTo(UPLOADED_ETAG));
+	}
+
+	/**
+	 * A UUID carries no case, so an object stored under an id spelled one way is the same object a read spells the other
+	 * way. The id is canonicalized on the way in and the object is stored once, not twice.
+	 */
+	@Test
+	void test13_storeObjectWithAnUppercaseId() {
+		setupCall()
+			.withServicePath("/%s/%s".formatted(BUCKET, MIXED_CASE_ID.toUpperCase(Locale.ROOT)))
+			.withHttpMethod(PUT)
+			.withContentType(TEXT_PLAIN)
+			.withRequest("upload.txt")
+			.withExpectedResponseStatus(OK)
+			.sendRequest();
+
+		setupCall()
+			.withServicePath("/%s/%s".formatted(BUCKET, MIXED_CASE_ID.toLowerCase(Locale.ROOT)))
+			.withHttpMethod(GET)
+			.withExpectedResponseStatus(OK)
+			.withExpectedResponseHeader(ETAG, List.of(".*%s.*".formatted(UPLOADED_ETAG)))
+			.sendRequest();
+
+		assertThat(storedFileRepository.count()).isEqualTo(4);
+		assertThat(storedFileRepository.findByBucketAndId(BUCKET, MIXED_CASE_ID.toLowerCase(Locale.ROOT))).isPresent();
+	}
+
+	/**
+	 * A response header is written as ISO-8859-1, so a file name carrying anything outside it is encoded the way RFC 6266
+	 * asks for. Written as it stands the container discards the whole header and the client is left with no name at all.
+	 */
+	@Test
+	void test14_readObjectWithANonAsciiFileName() {
+		setupCall()
+			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withHttpMethod(PUT)
+			.withContentType(TEXT_PLAIN)
+			.withHeader(CONTENT_DISPOSITION, "attachment; filename*=UTF-8''r%C3%A4kning-%E2%82%AC.pdf")
+			.withRequest("upload.txt")
+			.withExpectedResponseStatus(OK)
+			.sendRequest();
+
+		setupCall()
+			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withHttpMethod(GET)
+			.withExpectedResponseStatus(OK)
+			.withExpectedResponseHeader(CONTENT_DISPOSITION, List.of(".*filename\\*=UTF-8''r%C3%A4kning-%E2%82%AC\\.pdf"))
+			.sendRequest();
+	}
+
+	/**
+	 * The content type is replayed as the content type of every later read, so one too long to be stored whole is refused
+	 * rather than truncated — a client told its object was stored is entitled to get the type it sent back.
+	 */
+	@Test
+	void test15_storeObjectWithUnusableContentType() {
+		setupCall()
+			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withHttpMethod(PUT)
+			.withHeader(CONTENT_TYPE, "text/plain;charset=utf-8;x=%s".formatted("a".repeat(300)))
+			.withRequest("upload.txt")
+			.withExpectedResponseStatus(BAD_REQUEST)
+			.withExpectedResponse(RESPONSE_FILE)
+			.sendRequestAndVerifyResponse();
+
+		assertThat(storedFileRepository.findByBucketAndId(BUCKET, NEW_ID)).isEmpty();
+	}
+
+	/**
+	 * The circuit breaker guards the methods declared on the repository interface, and a method inherited from
+	 * JpaRepository is declared elsewhere — which once left every write unguarded while every read was guarded. This
+	 * fails if the redeclaration of save that brings it back inside the annotated type is ever removed.
+	 */
+	@Test
+	void test16_storeIsGuardedByTheCircuitBreaker() {
+		// Counting events rather than reading the metrics of the breaker, whose window holds only the last ten calls and
+		// is long full by the time this runs.
+		final var guardedCalls = new AtomicInteger();
+		circuitBreakerRegistry.circuitBreaker("storedFileRepository").getEventPublisher()
+			.onSuccess(event -> guardedCalls.incrementAndGet());
+
+		setupCall()
+			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withHttpMethod(PUT)
+			.withContentType(TEXT_PLAIN)
+			.withRequest("upload.txt")
+			.withExpectedResponseStatus(OK)
+			.sendRequest();
+
+		assertThat(guardedCalls).hasPositiveValue();
 	}
 }

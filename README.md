@@ -48,7 +48,9 @@ subset of S3 the consuming services need.
 - **The client chooses the object id, and it must be a UUID.** Storing is a `PUT` to the id, as it is in S3, and the id
   is what later reads and deletes address the object by. Requiring a UUID rather than a free-form S3 key is what keeps
   key validation out of the service entirely — a UUID has no path separators, no relative segments and a fixed length —
-  and a UUID is still a legal S3 key after a migration. The name of the uploaded file is stored alongside it as
+  and a UUID is still a legal S3 key after a migration. A UUID carries no case, so the id is lowercased on the way in
+  and an id spelled in another case addresses the object already stored rather than a second one; the metadata that
+  comes back carries the id the object is stored under. The name of the uploaded file is stored alongside it as
   metadata and echoed back in the `Content-Disposition` header of a read, but it never identifies the object.
 - **Storing to an id that already holds an object replaces it**, as it does in S3. There is no `409`. This is what makes
   a store idempotent: a client that retries one it never saw the response to ends up with exactly one object rather
@@ -62,12 +64,18 @@ subset of S3 the consuming services need.
   other value is accepted in the header — a specific entity tag is refused with a `400` rather than ignored, because a
   client that sends one is asking for a guarantee and silently overwriting is the one answer it must not get.
 - **Content is sent and returned as the raw request body**, as with the S3 `PutObject` and `GetObject` calls — not as
-  `multipart/form-data`. The content type is taken from the `Content-Type` header and replayed on reads.
+  `multipart/form-data`. The content type is taken from the `Content-Type` header and replayed on reads. Since it is
+  replayed rather than merely recorded, a header longer than the 255 characters that can be stored is refused with a
+  `400` rather than truncated or dropped — a client told its object was stored is entitled to get the type it sent
+  back, and both of those hand it a different one. Reads of an object stored without a content type fall back to
+  `application/octet-stream`.
 - **The name of the uploaded file comes from the `Content-Disposition` header**, is client controlled and is sanitized —
   the directory some clients send along with it is stripped, as are control characters and the characters that would let
   it break out of the `Content-Disposition` header of a read. It is capped at 255 characters and dropped entirely when
   the header is absent, malformed or leaves nothing usable, in which case reads fall back to naming the file after its
-  id.
+  id. On the way out it is encoded as RFC 6266 asks for, carrying both a plain `filename` and a `filename*` — a
+  response header is written as ISO-8859-1, and a name holding anything outside it would otherwise make the container
+  discard the whole header and leave the client with no name at all.
 - **Every object carries an `ETag`** — the hex encoded SHA-256 digest of its content, returned on store and on every
   read. A read whose `If-None-Match` matches is answered with a bare `304` without the content being fetched at all: a
   read looks up the metadata first and goes back for the content only once it is clear the client is getting it.
@@ -77,8 +85,7 @@ subset of S3 the consuming services need.
   `server.tomcat.max-swallow-size` tracks the limit — see [Configuration](#configuration) — to keep a refused upload
   from reaching the client as a connection reset instead of as the status.
 - **Deletes are idempotent**, matching S3 — deleting an object that does not exist returns `204`, not `404`.
-- **Objects expire.** Every object gets an expiry, either supplied per upload or derived from the configured default
-  time to live. Expired objects are invisible to reads and lists immediately, and a scheduled job removes them from the
+- **Objects expire.** Expired objects are invisible to reads and lists immediately, and a scheduled job removes them from the
   database.
 
 ### Migrating to a real S3

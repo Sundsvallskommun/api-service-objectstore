@@ -3,6 +3,7 @@ package se.sundsvall.objectstore.integration.db;
 import jakarta.persistence.EntityManager;
 import java.time.OffsetDateTime;
 import org.hibernate.exception.ConstraintViolationException;
+import org.hibernate.exception.ConstraintViolationException.ConstraintKind;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 import se.sundsvall.objectstore.integration.db.model.StoredFileEntity;
@@ -38,6 +39,11 @@ class StoredFileRepositoryImpl implements StoredFileRepositoryCustom {
 			entityManager.persist(entity);
 			entityManager.flush();
 		} catch (final ConstraintViolationException e) {
+			// Only a collision on the key means the id is taken. Reporting any other integrity failure as one would
+			// answer a store that is refused for an unrelated reason with a precondition the client never sent.
+			if (e.getKind() != ConstraintKind.UNIQUE) {
+				throw e;
+			}
 			throw new DataIntegrityViolationException("An object is already stored under the id", e);
 		}
 	}

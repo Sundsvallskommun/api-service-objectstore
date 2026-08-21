@@ -1,9 +1,11 @@
 package se.sundsvall.objectstore.integration.db;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import java.time.OffsetDateTime;
 import org.springframework.dao.DataIntegrityViolationException;
 import se.sundsvall.objectstore.integration.db.model.StoredFileEntity;
 
+@CircuitBreaker(name = "storedFileRepository")
 public interface StoredFileRepositoryCustom {
 
 	/**

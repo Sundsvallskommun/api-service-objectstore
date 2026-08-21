@@ -16,6 +16,18 @@ import se.sundsvall.objectstore.integration.db.model.StoredFileSummary;
 @CircuitBreaker(name = "storedFileRepository")
 public interface StoredFileRepository extends JpaRepository<StoredFileEntity, StoredFileId>, StoredFileRepositoryCustom {
 
+	/**
+	 * Redeclared rather than inherited so that the circuit breaker on this interface covers it. The breaker is applied to
+	 * the methods declared here, and a method inherited from JpaRepository is declared elsewhere — which left every write
+	 * unguarded while every read was guarded. Removing this redeclaration silently reopens that hole.
+	 *
+	 * @param  <S>    the type of the object to store
+	 * @param  entity the object to store
+	 * @return        the stored object
+	 */
+	@Override
+	<S extends StoredFileEntity> S save(S entity);
+
 	Optional<StoredFileEntity> findByBucketAndId(String bucket, String id);
 
 	/**
