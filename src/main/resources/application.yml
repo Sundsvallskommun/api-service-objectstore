@@ -8,6 +8,26 @@ openapi:
   name: ${spring.application.name}
   title: ${spring.application.name}
   version: '@project.version@'
+scheduler:
+  cleanup:
+    name: cleanup
+    cron: "0 0 3 * * *"
+    lock-at-most-for: PT10M
+    maximum-execution-time: PT5M
 spring:
   application:
-    name: template
+    name: objectstore
+  datasource:
+    driver-class-name: org.mariadb.jdbc.Driver
+  flyway:
+    enabled: false
+  jpa:
+    properties:
+      jakarta:
+        persistence:
+          schema-generation:
+            database:
+              action: none
+storage:
+  default-time-to-live: P7D
+  max-object-size: 50MB

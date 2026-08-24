@@ -1,0 +1,5 @@
+{
+	"title": "Not Found",
+	"status": 404,
+	"detail": "No object with id [99999999-9999-9999-9999-999999999999] exists in bucket [attachments]"
+}

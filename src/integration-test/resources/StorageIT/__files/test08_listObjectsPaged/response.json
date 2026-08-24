@@ -1,0 +1,16 @@
+{
+	"objects": [
+		{
+			"id": "11111111-1111-1111-1111-111111111111",
+			"bucket": "attachments",
+			"fileName": "existing.txt",
+			"contentType": "text/plain",
+			"size": 24,
+			"etag": "c448faf851ca35959e15384db68a45027e8ab0bd19ba4e3fae4b649338a25fa2",
+			"created": "${json-unit.any-string}",
+			"expiresAt": "${json-unit.any-string}"
+		}
+	],
+	"truncated": true,
+	"nextContinuationToken": "11111111-1111-1111-1111-111111111111"
+}

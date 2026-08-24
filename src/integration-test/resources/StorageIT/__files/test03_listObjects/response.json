@@ -1,0 +1,24 @@
+{
+	"objects": [
+		{
+			"id": "11111111-1111-1111-1111-111111111111",
+			"bucket": "attachments",
+			"fileName": "existing.txt",
+			"contentType": "text/plain",
+			"size": 24,
+			"etag": "c448faf851ca35959e15384db68a45027e8ab0bd19ba4e3fae4b649338a25fa2",
+			"created": "${json-unit.any-string}",
+			"expiresAt": "${json-unit.any-string}"
+		},
+		{
+			"id": "33333333-3333-3333-3333-333333333333",
+			"bucket": "attachments",
+			"fileName": "removable.txt",
+			"contentType": "text/plain",
+			"size": 9,
+			"etag": "30190ac54aa41e27a2550b5ada5ee16a16ec53d27fc9d6c061c3c6fd5d98df78",
+			"created": "${json-unit.any-string}"
+		}
+	],
+	"truncated": false
+}
