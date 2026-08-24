@@ -60,22 +60,24 @@ subset of S3 the consuming services need.
   conditional writes of S3. The check runs before the request body is read, so a refused store never pulls the content
   across the wire, and the primary key refuses the insert again at the end, so two simultaneous create-only stores of
   the same id cannot both succeed. An expired object does not stand in the way of one, since it is already invisible to
-  every read. No
-  other value is accepted in the header — a specific entity tag is refused with a `400` rather than ignored, because a
-  client that sends one is asking for a guarantee and silently overwriting is the one answer it must not get.
+  every read. No other value is accepted in the header — a specific entity tag is refused with a `400` rather than
+  ignored, because a client that sends one is asking for a guarantee and silently overwriting is the one answer it
+  must not get.
 - **Content is sent and returned as the raw request body**, as with the S3 `PutObject` and `GetObject` calls — not as
   `multipart/form-data`. The content type is taken from the `Content-Type` header and replayed on reads. Since it is
-  replayed rather than merely recorded, a header longer than the 255 characters that can be stored is refused with a
-  `400` rather than truncated or dropped — a client told its object was stored is entitled to get the type it sent
-  back, and both of those hand it a different one. Reads of an object stored without a content type fall back to
+  replayed rather than merely recorded, a header that cannot be stored whole is refused with a `400` rather than
+  truncated or dropped — a client told its object was stored is entitled to get the type it sent back, and both of
+  those hand it a different one. That covers a header longer than the 255 characters the column holds and one that is
+  not a media type at all. Sending no `Content-Type` is fine; reads of an object stored without one fall back to
   `application/octet-stream`.
 - **The name of the uploaded file comes from the `Content-Disposition` header**, is client controlled and is sanitized —
-  the directory some clients send along with it is stripped, as are control characters and the characters that would let
-  it break out of the `Content-Disposition` header of a read. It is capped at 255 characters and dropped entirely when
-  the header is absent, malformed or leaves nothing usable, in which case reads fall back to naming the file after its
-  id. On the way out it is encoded as RFC 6266 asks for, carrying both a plain `filename` and a `filename*` — a
-  response header is written as ISO-8859-1, and a name holding anything outside it would otherwise make the container
-  discard the whole header and leave the client with no name at all.
+  the directory some clients send along with it is stripped, as are the characters that would let it break out of the
+  `Content-Disposition` header of a read and every character that carries no glyph of its own, the bidirectional
+  overrides that would otherwise let a name render as a different file type included. It is capped at 255 characters
+  and dropped entirely when the header is absent, malformed or leaves nothing usable, in which case reads fall back to
+  naming the file after its id. On the way out it is encoded as RFC 6266 asks for, carrying both a plain `filename`
+  and a `filename*` — a response header is written as ISO-8859-1, and a name holding anything outside it would
+  otherwise make the container discard the whole header and leave the client with no name at all.
 - **Every object carries an `ETag`** — the hex encoded SHA-256 digest of its content, returned on store and on every
   read. A read whose `If-None-Match` matches is answered with a bare `304` without the content being fetched at all: a
   read looks up the metadata first and goes back for the content only once it is clear the client is getting it.
@@ -84,18 +86,21 @@ subset of S3 the consuming services need.
   whether or not the client declared its length honestly. The refusal is decided before the body is read, so
   `server.tomcat.max-swallow-size` tracks the limit — see [Configuration](#configuration) — to keep a refused upload
   from reaching the client as a connection reset instead of as the status.
+- **An empty body is refused with a `400`.** A zero-byte object is far more often a client that failed to attach
+  anything than one that meant it, and storing it would hand every later read an object that looks stored and is not.
 - **Deletes are idempotent**, matching S3 — deleting an object that does not exist returns `204`, not `404`.
-- **Objects expire.** Expired objects are invisible to reads and lists immediately, and a scheduled job removes them from the
-  database.
+- **Objects expire.** An upload sets its own expiry with the `expiresAt` query parameter, and one that carries none is
+  given the configured default time to live — or no expiry at all, when that is left unset. An expiry that has already
+  passed is refused with a `400` rather than honoured, since it would store an object invisible to the very next read.
+  Expired objects are invisible to reads and lists immediately, and a scheduled job removes them from the database.
 
 ### Migrating to a real S3
 
 Consumers should hide this service behind a small storage interface of their own (store / fetch / delete). Migration is
 then a matter of writing one S3-SDK-backed implementation and swapping the bean — a store is already a `PUT` of a raw
 body to a client-chosen key, the bucket of every object maps 1:1 onto an S3 bucket, and its id is a legal S3 object key
-as it stands. **The mapping of a municipality onto S3 buckets is
-deliberately left open** — this service carries no municipality ID, so the choice (bucket per municipality vs.
-municipality as key prefix) is made at migration time.
+as it stands. **The mapping of a municipality onto S3 buckets is deliberately left open** — this service carries no
+municipality ID, so the choice (bucket per municipality vs. municipality as key prefix) is made at migration time.
 
 Migrating the stored files themselves is not supported; the service is intended for short-lived objects such as
 attachments that are discarded once sent.

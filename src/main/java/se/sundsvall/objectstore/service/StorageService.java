@@ -27,6 +27,7 @@ import se.sundsvall.objectstore.integration.db.model.StoredFileEntity;
 import se.sundsvall.objectstore.integration.db.model.StoredFileSummary;
 
 import static jakarta.servlet.http.HttpServletResponse.SC_NOT_MODIFIED;
+import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.toIntExact;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -78,12 +79,20 @@ public class StorageService {
 	private static final long MAX_ARRAY_LENGTH = Integer.MAX_VALUE - 8L;
 
 	/**
-	 * The characters that are stripped from the name of the uploaded file: the directory it was picked from (some clients
-	 * send the full path), control characters, and the quote and backslash that would otherwise let the name break out of
-	 * the Content-Disposition header.
+	 * The characters that are stripped from the name of the uploaded file, on top of the directory it was picked from
+	 * (some clients send the full path): the quote and backslash that would otherwise let the name break out of the
+	 * Content-Disposition header, and the characters that carry no glyph of their own.
+	 *
+	 * <p>
+	 * The categories are named rather than the POSIX class Cntrl, which in Java covers US-ASCII alone and so lets through
+	 * everything that makes this worth doing. Cc adds the C1 controls, which are representable in the ISO-8859-1 a
+	 * response header is written in and would therefore reach the client as raw bytes. Cf adds the format characters,
+	 * among them the right-to-left override: the name is echoed back percent-encoded in the filename* parameter, which a
+	 * browser decodes before displaying, so an override left in place reverses the tail of the name and renders an
+	 * executable as a document. Zl and Zp add the two separators that are neither.
+	 * </p>
 	 */
-	private static final String FILE_NAME_DIRECTORY_REGEX = ".*[/\\\\]";
-	private static final String FILE_NAME_ILLEGAL_CHARACTER_REGEX = "[\\p{Cntrl}\"\\\\]";
+	private static final String FILE_NAME_ILLEGAL_CHARACTER_REGEX = "[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\"\\\\]";
 	private static final int FILE_NAME_MAX_LENGTH = 255;
 
 	/**
@@ -402,12 +411,24 @@ public class StorageService {
 	private static String toFileName(final String contentDisposition) {
 		return ofNullable(contentDisposition)
 			.map(StorageService::parseFileName)
-			.map(name -> name.replaceAll(FILE_NAME_DIRECTORY_REGEX, ""))
+			.map(StorageService::stripDirectory)
 			.map(name -> name.replaceAll(FILE_NAME_ILLEGAL_CHARACTER_REGEX, ""))
 			.map(String::strip)
 			.filter(not(String::isEmpty))
 			.map(name -> name.substring(0, min(name.length(), FILE_NAME_MAX_LENGTH)))
 			.orElse(null);
+	}
+
+	/**
+	 * Keeps only the last segment of a name that carries a path. Written with lastIndexOf rather than a leading .* in a
+	 * regular expression, whose greedy match backtracks over the whole value once per starting position and so costs
+	 * time quadratic in the length of a header the client controls.
+	 *
+	 * @param  name the parsed file name
+	 * @return      the name with any directory prefix removed
+	 */
+	private static String stripDirectory(final String name) {
+		return name.substring(max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1);
 	}
 
 	private static String parseFileName(final String contentDisposition) {
