@@ -1,5 +1,6 @@
 package se.sundsvall.objectstore.api;
 
+import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -9,6 +10,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.convention.TestBean;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import se.sundsvall.objectstore.Application;
@@ -17,6 +19,7 @@ import se.sundsvall.objectstore.api.model.ObjectListing;
 import se.sundsvall.objectstore.service.StorageService;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.time.ZoneOffset.UTC;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -34,18 +37,32 @@ import static org.springframework.http.MediaType.APPLICATION_PDF;
 class StorageResourceTest {
 
 	private static final String BUCKET = "attachments";
+	private static final String FRAMEWORK_BUCKET = "actuator";
 	private static final String ID = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b";
 	private static final String FILE_NAME = "invoice-123.pdf";
 	private static final String ETAG = "2239ce4df9ee8db012834642ec801b55ba2c92b28bdd11f4d73d9c55d39f3b0a";
-	private static final String BUCKET_PATH = "/{bucket}";
-	private static final String OBJECT_PATH = "/{bucket}/{id}";
+	private static final String BUCKET_PATH = "/objects/{bucket}";
+	private static final String OBJECT_PATH = "/objects/{bucket}/{id}";
 	private static final byte[] CONTENT = "file-content".getBytes(UTF_8);
+	private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-08-20T12:00:00Z");
+	private static final OffsetDateTime EXPIRES_AT = NOW.plusDays(7);
+
+	/**
+	 * The clock the service reads the current time from is fixed here, so that an expiry which has to lie in the future
+	 * can be written as a literal that stays in the future instead of one the wall clock eventually passes.
+	 */
+	@TestBean
+	private Clock clock;
 
 	@MockitoBean
 	private StorageService storageServiceMock;
 
 	@Autowired
 	private WebTestClient webTestClient;
+
+	private static Clock clock() {
+		return Clock.fixed(NOW.toInstant(), UTC);
+	}
 
 	@Test
 	void storeObject() {
@@ -81,20 +98,18 @@ class StorageResourceTest {
 	@Test
 	void storeObjectWithExpiry() {
 		// Arrange
-		final var expiresAt = OffsetDateTime.parse("2026-08-25T12:30:00Z");
-
-		when(storageServiceMock.store(eq(BUCKET), eq(ID), any(), isNull(), isNull(), eq(expiresAt), any())).thenReturn(FileMetadata.create().withId(ID).withEtag(ETAG));
+		when(storageServiceMock.store(eq(BUCKET), eq(ID), any(), isNull(), isNull(), eq(EXPIRES_AT), any())).thenReturn(FileMetadata.create().withId(ID).withEtag(ETAG));
 
 		// Act
 		webTestClient.put()
-			.uri(builder -> builder.path(OBJECT_PATH).queryParam("expiresAt", "2026-08-25T12:30:00Z").build(Map.of("bucket", BUCKET, "id", ID)))
+			.uri(builder -> builder.path(OBJECT_PATH).queryParam("expiresAt", EXPIRES_AT.toString()).build(Map.of("bucket", BUCKET, "id", ID)))
 			.contentType(APPLICATION_PDF)
 			.bodyValue(CONTENT)
 			.exchange()
 			.expectStatus().isOk();
 
 		// Assert
-		verify(storageServiceMock).store(eq(BUCKET), eq(ID), any(), isNull(), isNull(), eq(expiresAt), any());
+		verify(storageServiceMock).store(eq(BUCKET), eq(ID), any(), isNull(), isNull(), eq(EXPIRES_AT), any());
 		verifyNoMoreInteractions(storageServiceMock);
 	}
 
@@ -115,6 +130,29 @@ class StorageResourceTest {
 
 		// Assert
 		verify(storageServiceMock).store(eq(BUCKET), eq(ID), any(), any(), eq("*"), isNull(), any());
+		verifyNoMoreInteractions(storageServiceMock);
+	}
+
+	/**
+	 * The object endpoints sit under a prefix of their own, so a name the framework serves a path for is an ordinary
+	 * bucket name. It was not while they sat at the root, and this fails if they are ever moved back.
+	 */
+	@Test
+	void storeObjectInABucketNamedAfterAFrameworkPath() {
+		// Arrange
+		when(storageServiceMock.store(eq(FRAMEWORK_BUCKET), eq(ID), any(), isNull(), isNull(), isNull(), any()))
+			.thenReturn(FileMetadata.create().withId(ID).withBucket(FRAMEWORK_BUCKET).withEtag(ETAG));
+
+		// Act
+		webTestClient.put()
+			.uri(OBJECT_PATH.replace("{bucket}", FRAMEWORK_BUCKET).replace("{id}", ID))
+			.contentType(APPLICATION_PDF)
+			.bodyValue(CONTENT)
+			.exchange()
+			.expectStatus().isOk();
+
+		// Assert
+		verify(storageServiceMock).store(eq(FRAMEWORK_BUCKET), eq(ID), any(), isNull(), isNull(), isNull(), any());
 		verifyNoMoreInteractions(storageServiceMock);
 	}
 

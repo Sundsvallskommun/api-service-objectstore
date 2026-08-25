@@ -55,7 +55,7 @@ class StorageIT extends AbstractAppTest {
 	@Test
 	void test01_storeObject() {
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withServicePath(objectPath(BUCKET, NEW_ID))
 			.withHttpMethod(PUT)
 			.withContentType(TEXT_PLAIN)
 			.withHeader(CONTENT_DISPOSITION, "attachment; filename=\"upload.txt\"")
@@ -72,13 +72,87 @@ class StorageIT extends AbstractAppTest {
 			});
 	}
 
+	@Test
+	void test02_readObject() throws Exception {
+		setupCall()
+			.withServicePath(objectPath(BUCKET, EXISTING_ID))
+			.withHttpMethod(GET)
+			.withExpectedResponseStatus(OK)
+			.withExpectedResponseHeader(ETAG, List.of(".*%s.*".formatted(EXISTING_ETAG)))
+			.withExpectedBinaryResponse("expected-content.txt")
+			.sendRequestAndVerifyResponse();
+	}
+
+	@Test
+	void test03_listObjects() {
+		setupCall()
+			.withServicePath(bucketPath(BUCKET))
+			.withHttpMethod(GET)
+			.withExpectedResponseStatus(OK)
+			.withExpectedResponse(RESPONSE_FILE)
+			.sendRequestAndVerifyResponse();
+	}
+
+	@Test
+	void test04_deleteObject() {
+		setupCall()
+			.withServicePath(objectPath(BUCKET, REMOVABLE_ID))
+			.withHttpMethod(DELETE)
+			.withExpectedResponseStatus(NO_CONTENT)
+			.withExpectedResponseBodyIsNull()
+			.sendRequestAndVerifyResponse();
+
+		assertThat(storedFileRepository.findByBucketAndId(BUCKET, REMOVABLE_ID)).isEmpty();
+	}
+
+	@Test
+	void test05_readObjectNotFound() {
+		setupCall()
+			.withServicePath(objectPath(BUCKET, MISSING_ID))
+			.withHttpMethod(GET)
+			.withExpectedResponseStatus(NOT_FOUND)
+			.withExpectedResponse(RESPONSE_FILE)
+			.sendRequestAndVerifyResponse();
+	}
+
+	@Test
+	void test06_readObjectWithInvalidId() {
+		setupCall()
+			.withServicePath(objectPath(BUCKET, "not-a-uuid"))
+			.withHttpMethod(GET)
+			.withExpectedResponseStatus(BAD_REQUEST)
+			.withExpectedResponse(RESPONSE_FILE)
+			.sendRequestAndVerifyResponse();
+	}
+
+	@Test
+	void test07_readObjectNotModified() {
+		setupCall()
+			.withServicePath(objectPath(BUCKET, EXISTING_ID))
+			.withHttpMethod(GET)
+			.withHeader(IF_NONE_MATCH, "\"%s\"".formatted(EXISTING_ETAG))
+			.withExpectedResponseStatus(NOT_MODIFIED)
+			.withExpectedResponseBodyIsNull()
+			.sendRequestAndVerifyResponse();
+	}
+
+	@Test
+	void test08_listObjectsPaged() {
+		setupCall()
+			.withServicePath(bucketPath(BUCKET) + "?maxKeys=1")
+			.withHttpMethod(GET)
+			.withExpectedResponseStatus(OK)
+			.withExpectedResponse(RESPONSE_FILE)
+			.sendRequestAndVerifyResponse();
+	}
+
 	/**
 	 * Storing to an id that already holds an object replaces it rather than adding a second one.
 	 */
 	@Test
 	void test09_storeObjectOverExistingId() {
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, EXISTING_ID))
+			.withServicePath(objectPath(BUCKET, EXISTING_ID))
 			.withHttpMethod(PUT)
 			.withContentType(TEXT_PLAIN)
 			.withHeader(CONTENT_DISPOSITION, "attachment; filename=\"upload.txt\"")
@@ -94,87 +168,13 @@ class StorageIT extends AbstractAppTest {
 			});
 	}
 
-	@Test
-	void test02_readObject() throws Exception {
-		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, EXISTING_ID))
-			.withHttpMethod(GET)
-			.withExpectedResponseStatus(OK)
-			.withExpectedResponseHeader(ETAG, List.of(".*%s.*".formatted(EXISTING_ETAG)))
-			.withExpectedBinaryResponse("expected-content.txt")
-			.sendRequestAndVerifyResponse();
-	}
-
-	@Test
-	void test03_listObjects() {
-		setupCall()
-			.withServicePath("/%s".formatted(BUCKET))
-			.withHttpMethod(GET)
-			.withExpectedResponseStatus(OK)
-			.withExpectedResponse(RESPONSE_FILE)
-			.sendRequestAndVerifyResponse();
-	}
-
-	@Test
-	void test04_deleteObject() {
-		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, REMOVABLE_ID))
-			.withHttpMethod(DELETE)
-			.withExpectedResponseStatus(NO_CONTENT)
-			.withExpectedResponseBodyIsNull()
-			.sendRequestAndVerifyResponse();
-
-		assertThat(storedFileRepository.findByBucketAndId(BUCKET, REMOVABLE_ID)).isEmpty();
-	}
-
-	@Test
-	void test05_readObjectNotFound() {
-		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, MISSING_ID))
-			.withHttpMethod(GET)
-			.withExpectedResponseStatus(NOT_FOUND)
-			.withExpectedResponse(RESPONSE_FILE)
-			.sendRequestAndVerifyResponse();
-	}
-
-	@Test
-	void test06_readObjectWithInvalidId() {
-		setupCall()
-			.withServicePath("/%s/not-a-uuid".formatted(BUCKET))
-			.withHttpMethod(GET)
-			.withExpectedResponseStatus(BAD_REQUEST)
-			.withExpectedResponse(RESPONSE_FILE)
-			.sendRequestAndVerifyResponse();
-	}
-
-	@Test
-	void test07_readObjectNotModified() {
-		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, EXISTING_ID))
-			.withHttpMethod(GET)
-			.withHeader(IF_NONE_MATCH, "\"%s\"".formatted(EXISTING_ETAG))
-			.withExpectedResponseStatus(NOT_MODIFIED)
-			.withExpectedResponseBodyIsNull()
-			.sendRequestAndVerifyResponse();
-	}
-
-	@Test
-	void test08_listObjectsPaged() {
-		setupCall()
-			.withServicePath("/%s?maxKeys=1".formatted(BUCKET))
-			.withHttpMethod(GET)
-			.withExpectedResponseStatus(OK)
-			.withExpectedResponse(RESPONSE_FILE)
-			.sendRequestAndVerifyResponse();
-	}
-
 	/**
 	 * A wildcard If-None-Match refuses the store rather than overwriting what the id already holds.
 	 */
 	@Test
 	void test10_storeObjectWithCreateOnlyPrecondition() {
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, EXISTING_ID))
+			.withServicePath(objectPath(BUCKET, EXISTING_ID))
 			.withHttpMethod(PUT)
 			.withContentType(TEXT_PLAIN)
 			.withHeader(IF_NONE_MATCH, "*")
@@ -194,7 +194,7 @@ class StorageIT extends AbstractAppTest {
 	@Test
 	void test11_storeObjectInAnotherBucket() {
 		setupCall()
-			.withServicePath("/%s/%s".formatted(OTHER_BUCKET, EXISTING_ID))
+			.withServicePath(objectPath(OTHER_BUCKET, EXISTING_ID))
 			.withHttpMethod(PUT)
 			.withContentType(TEXT_PLAIN)
 			.withHeader(CONTENT_DISPOSITION, "attachment; filename=\"upload.txt\"")
@@ -217,7 +217,7 @@ class StorageIT extends AbstractAppTest {
 	@Test
 	void test12_storeObjectWithCreateOnlyPreconditionWhenIdIsFree() {
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withServicePath(objectPath(BUCKET, NEW_ID))
 			.withHttpMethod(PUT)
 			.withContentType(TEXT_PLAIN)
 			.withHeader(IF_NONE_MATCH, "*")
@@ -239,7 +239,7 @@ class StorageIT extends AbstractAppTest {
 	@Test
 	void test13_storeObjectWithAnUppercaseId() {
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, MIXED_CASE_ID.toUpperCase(Locale.ROOT)))
+			.withServicePath(objectPath(BUCKET, MIXED_CASE_ID.toUpperCase(Locale.ROOT)))
 			.withHttpMethod(PUT)
 			.withContentType(TEXT_PLAIN)
 			.withRequest("upload.txt")
@@ -247,7 +247,7 @@ class StorageIT extends AbstractAppTest {
 			.sendRequest();
 
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, MIXED_CASE_ID.toLowerCase(Locale.ROOT)))
+			.withServicePath(objectPath(BUCKET, MIXED_CASE_ID.toLowerCase(Locale.ROOT)))
 			.withHttpMethod(GET)
 			.withExpectedResponseStatus(OK)
 			.withExpectedResponseHeader(ETAG, List.of(".*%s.*".formatted(UPLOADED_ETAG)))
@@ -264,7 +264,7 @@ class StorageIT extends AbstractAppTest {
 	@Test
 	void test14_readObjectWithANonAsciiFileName() {
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withServicePath(objectPath(BUCKET, NEW_ID))
 			.withHttpMethod(PUT)
 			.withContentType(TEXT_PLAIN)
 			.withHeader(CONTENT_DISPOSITION, "attachment; filename*=UTF-8''r%C3%A4kning-%E2%82%AC.pdf")
@@ -273,7 +273,7 @@ class StorageIT extends AbstractAppTest {
 			.sendRequest();
 
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withServicePath(objectPath(BUCKET, NEW_ID))
 			.withHttpMethod(GET)
 			.withExpectedResponseStatus(OK)
 			.withExpectedResponseHeader(CONTENT_DISPOSITION, List.of(".*filename\\*=UTF-8''r%C3%A4kning-%E2%82%AC\\.pdf"))
@@ -287,7 +287,7 @@ class StorageIT extends AbstractAppTest {
 	@Test
 	void test15_storeObjectWithUnusableContentType() {
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withServicePath(objectPath(BUCKET, NEW_ID))
 			.withHttpMethod(PUT)
 			.withHeader(CONTENT_TYPE, "text/plain;charset=utf-8;x=%s".formatted("a".repeat(300)))
 			.withRequest("upload.txt")
@@ -312,7 +312,7 @@ class StorageIT extends AbstractAppTest {
 			.onSuccess(event -> guardedCalls.incrementAndGet());
 
 		setupCall()
-			.withServicePath("/%s/%s".formatted(BUCKET, NEW_ID))
+			.withServicePath(objectPath(BUCKET, NEW_ID))
 			.withHttpMethod(PUT)
 			.withContentType(TEXT_PLAIN)
 			.withRequest("upload.txt")
@@ -320,5 +320,27 @@ class StorageIT extends AbstractAppTest {
 			.sendRequest();
 
 		assertThat(guardedCalls).hasPositiveValue();
+	}
+
+	/**
+	 * The path of a bucket. Built here rather than written out at every call so that the prefix the object endpoints sit
+	 * under lives in one place.
+	 *
+	 * @param  bucket the bucket
+	 * @return        the path of the bucket
+	 */
+	private static String bucketPath(final String bucket) {
+		return "/objects/%s".formatted(bucket);
+	}
+
+	/**
+	 * The path of an object.
+	 *
+	 * @param  bucket the bucket holding the object
+	 * @param  id     the id identifying the object
+	 * @return        the path of the object
+	 */
+	private static String objectPath(final String bucket, final String id) {
+		return "%s/%s".formatted(bucketPath(bucket), id);
 	}
 }

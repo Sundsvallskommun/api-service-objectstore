@@ -41,10 +41,8 @@ subset of S3 the consuming services need.
   or versioning. An object is keyed by its bucket and its id together, so the same id stored in two buckets is two
   unrelated objects rather than one.
 - **Bucket names follow the S3 naming rules** (lowercase letters, digits and hyphens, 3–63 characters) so they remain
-  valid bucket names after a migration to a real S3. Since buckets live at the root of the service, the names the
-  framework serves itself — `actuator`, `api-docs`, `csrf`, `error`, `favicon.ico`, `h2-console`, `swagger-resources`,
-  `swagger-ui`, `swagger-ui.html` and `webjars` — are excluded in the request mappings and cannot be used as bucket
-  names. Adding a root-level endpoint to this service means adding it to that exclusion list.
+  valid bucket names after a migration to a real S3. The object endpoints sit under `/objects` rather than at the root
+  of the service, so no name is reserved — a bucket may be called `actuator` or `swagger-ui` like any other.
 - **The client chooses the object id, and it must be a UUID.** Storing is a `PUT` to the id, as it is in S3, and the id
   is what later reads and deletes address the object by. Requiring a UUID rather than a free-form S3 key is what keeps
   key validation out of the service entirely — a UUID has no path separators, no relative segments and a fixed length —
@@ -116,50 +114,50 @@ running service by `OpenApiSpecificationIT`.
 
 ### API Endpoints
 
-|  Method  |       Path       |                                                                                                                             Description                                                                                                                              |
-|----------|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `PUT`    | `/{bucket}/{id}` | Store an object under a client-chosen UUID. Content is the raw request body; `Content-Type`, `Content-Disposition` and the `expiresAt` query parameter are optional. Returns `200` with the metadata and an `ETag`. Replaces any object already stored under the id. |
-| `GET`    | `/{bucket}`      | List a page of the objects in a bucket, ordered by id. Optional `continuationToken` and `maxKeys` (1–1000, default 1000) query parameters.                                                                                                                           |
-| `GET`    | `/{bucket}/{id}` | Read an object. Returns the raw bytes and an `ETag`. Honours `If-None-Match` with a `304`.                                                                                                                                                                           |
-| `DELETE` | `/{bucket}/{id}` | Delete an object. Idempotent.                                                                                                                                                                                                                                        |
+|  Method  |           Path           |                                                                                                                             Description                                                                                                                              |
+|----------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `PUT`    | `/objects/{bucket}/{id}` | Store an object under a client-chosen UUID. Content is the raw request body; `Content-Type`, `Content-Disposition` and the `expiresAt` query parameter are optional. Returns `200` with the metadata and an `ETag`. Replaces any object already stored under the id. |
+| `GET`    | `/objects/{bucket}`      | List a page of the objects in a bucket, ordered by id. Optional `continuationToken` and `maxKeys` (1–1000, default 1000) query parameters.                                                                                                                           |
+| `GET`    | `/objects/{bucket}/{id}` | Read an object. Returns the raw bytes and an `ETag`. Honours `If-None-Match` with a `304`.                                                                                                                                                                           |
+| `DELETE` | `/objects/{bucket}/{id}` | Delete an object. Idempotent.                                                                                                                                                                                                                                        |
 
 ### Example Requests
 
 ```bash
 # Store an object under an id you generated yourself
 ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
-curl -X PUT "http://localhost:8080/attachments/$ID" \
+curl -X PUT "http://localhost:8080/objects/attachments/$ID" \
   -H "Content-Type: application/pdf" \
   -H 'Content-Disposition: attachment; filename="invoice-123.pdf"' \
   --data-binary "@invoice-123.pdf"
 # {"id":"d1b2d33e-...","bucket":"attachments","fileName":"invoice-123.pdf","etag":"9f86d081...", ... }
 
 # Store it again — the same call replaces it rather than adding a second object
-curl -X PUT "http://localhost:8080/attachments/$ID" --data-binary "@invoice-123.pdf"
+curl -X PUT "http://localhost:8080/objects/attachments/$ID" --data-binary "@invoice-123.pdf"
 
 # Refuse to replace it — 412 when the id is already taken
-curl -X PUT "http://localhost:8080/attachments/$ID" -H 'If-None-Match: *' --data-binary "@invoice-123.pdf"
+curl -X PUT "http://localhost:8080/objects/attachments/$ID" -H 'If-None-Match: *' --data-binary "@invoice-123.pdf"
 
 # Read it back
-curl "http://localhost:8080/attachments/$ID" -O -J
+curl "http://localhost:8080/objects/attachments/$ID" -O -J
 
 # Read it back only if it changed
-curl "http://localhost:8080/attachments/$ID" \
+curl "http://localhost:8080/objects/attachments/$ID" \
   -H 'If-None-Match: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"'
 
 # List the bucket, a page at a time
-curl "http://localhost:8080/attachments?maxKeys=100"
-curl "http://localhost:8080/attachments?maxKeys=100&continuationToken=d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b"
+curl "http://localhost:8080/objects/attachments?maxKeys=100"
+curl "http://localhost:8080/objects/attachments?maxKeys=100&continuationToken=d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b"
 
 # Delete it
-curl -X DELETE "http://localhost:8080/attachments/$ID"
+curl -X DELETE "http://localhost:8080/objects/attachments/$ID"
 ```
 
 An explicit expiry goes in the `expiresAt` query parameter and has to be percent-encoded — an unencoded `+` in a query
 string decodes to a space and the timestamp then fails to parse:
 
 ```bash
-curl -X PUT "http://localhost:8080/attachments/$ID?expiresAt=2026-08-25T14:30:00%2B02:00" --data-binary "@invoice-123.pdf"
+curl -X PUT "http://localhost:8080/objects/attachments/$ID?expiresAt=2026-08-25T14:30:00%2B02:00" --data-binary "@invoice-123.pdf"
 ```
 
 ## Configuration

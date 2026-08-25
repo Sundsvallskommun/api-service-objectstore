@@ -65,13 +65,10 @@ class StorageResource {
 	static final String BUCKET_PATTERN = "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$";
 
 	/**
-	 * The path of a bucket. Since buckets sit at the root of the service, the first segment is matched with an exclusion of
-	 * the paths served by the framework itself (the index page, the OpenAPI specification, the Swagger UI and its webjars,
-	 * actuator and the error page). Excluding them in the mapping rather than in the validation of the bucket name is what
-	 * lets those requests fall through to the handlers serving them — a request that merely fails validation never reaches
-	 * them. The consequence is that the excluded names cannot be used as bucket names.
+	 * The path of a bucket. It is prefixed rather than sitting at the root of the service, so that a bucket cannot be
+	 * named after a path the framework serves itself.
 	 */
-	private static final String BUCKET_PATH = "/{bucket:(?!actuator$|api-docs$|csrf$|error$|favicon\\.ico$|h2-console$|swagger-resources$|swagger-ui$|swagger-ui\\.html$|webjars$).+}";
+	private static final String BUCKET_PATH = "/objects/{bucket}";
 
 	private static final String OBJECT_PATH = BUCKET_PATH + "/{id}";
 

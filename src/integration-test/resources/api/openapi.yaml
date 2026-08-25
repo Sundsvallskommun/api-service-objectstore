@@ -13,7 +13,7 @@ tags:
 - name: Storage
   description: Storage of objects
 paths:
-  /{bucket}/{id}:
+  /objects/{bucket}/{id}:
     get:
       tags:
       - Storage
@@ -230,7 +230,7 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
-  /{bucket}:
+  /objects/{bucket}:
     get:
       tags:
       - Storage

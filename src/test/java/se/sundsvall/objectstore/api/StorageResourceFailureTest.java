@@ -30,7 +30,9 @@ class StorageResourceFailureTest {
 
 	private static final String BUCKET = "attachments";
 	private static final String ID = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b";
-	private static final String BUCKET_PATH = "/{bucket}";
+	private static final String BUCKET_PATH = "/objects/{bucket}";
+
+	private static final String OBJECT_PATH = "/objects/{bucket}/{id}";
 	private static final String INVALID_BUCKET = "Not-A-Valid-Bucket";
 	private static final String INVALID_ID = "not-a-uuid";
 	private static final byte[] CONTENT = "file-content".getBytes(UTF_8);
@@ -45,7 +47,7 @@ class StorageResourceFailureTest {
 	void storeObjectWithInvalidBucket() {
 		// Act
 		final var response = webTestClient.put()
-			.uri("/%s/%s".formatted(INVALID_BUCKET, ID))
+			.uri("/objects/%s/%s".formatted(INVALID_BUCKET, ID))
 			.contentType(APPLICATION_OCTET_STREAM)
 			.bodyValue(CONTENT)
 			.exchange()
@@ -69,7 +71,7 @@ class StorageResourceFailureTest {
 	void storeObjectWithInvalidId() {
 		// Act
 		final var response = webTestClient.put()
-			.uri("/%s/%s".formatted(BUCKET, INVALID_ID))
+			.uri("/objects/%s/%s".formatted(BUCKET, INVALID_ID))
 			.contentType(APPLICATION_OCTET_STREAM)
 			.bodyValue(CONTENT)
 			.exchange()
@@ -95,7 +97,7 @@ class StorageResourceFailureTest {
 	void storeObjectWithExpiryInThePast() {
 		// Act
 		final var response = webTestClient.put()
-			.uri(builder -> builder.path("/{bucket}/{id}").queryParam("expiresAt", "2020-01-01T00:00:00Z").build(Map.of("bucket", BUCKET, "id", ID)))
+			.uri(builder -> builder.path(OBJECT_PATH).queryParam("expiresAt", "2020-01-01T00:00:00Z").build(Map.of("bucket", BUCKET, "id", ID)))
 			.contentType(APPLICATION_OCTET_STREAM)
 			.bodyValue(CONTENT)
 			.exchange()
@@ -180,7 +182,7 @@ class StorageResourceFailureTest {
 	void readObjectWithInvalidBucket() {
 		// Act
 		final var response = webTestClient.get()
-			.uri("/%s/%s".formatted(INVALID_BUCKET, ID))
+			.uri("/objects/%s/%s".formatted(INVALID_BUCKET, ID))
 			.exchange()
 			.expectStatus().isBadRequest()
 			.expectBody(ConstraintViolationProblem.class)
@@ -200,7 +202,7 @@ class StorageResourceFailureTest {
 	void readObjectWithInvalidId() {
 		// Act
 		final var response = webTestClient.get()
-			.uri("/%s/%s".formatted(BUCKET, INVALID_ID))
+			.uri("/objects/%s/%s".formatted(BUCKET, INVALID_ID))
 			.exchange()
 			.expectStatus().isBadRequest()
 			.expectBody(ConstraintViolationProblem.class)
@@ -217,8 +219,8 @@ class StorageResourceFailureTest {
 	}
 
 	/**
-	 * The object endpoints sit at the root of the service, so they must not shadow the paths served by the framework
-	 * itself.
+	 * The object endpoints sit under a prefix of their own so that they cannot shadow the paths served by the framework
+	 * itself. These pin that they do not.
 	 */
 	@ParameterizedTest
 	@ValueSource(strings = {
@@ -236,8 +238,8 @@ class StorageResourceFailureTest {
 	}
 
 	/**
-	 * Paths reserved by the framework that this service happens to serve no resource for must fall through to a 404 rather
-	 * than be treated as a bucket, which would answer with a constraint violation instead.
+	 * Paths the framework serves no resource for must fall through to a 404 rather than be treated as a bucket, which
+	 * would answer with a constraint violation instead.
 	 */
 	@ParameterizedTest
 	@ValueSource(strings = {
@@ -258,7 +260,7 @@ class StorageResourceFailureTest {
 	void deleteObjectWithInvalidBucket() {
 		// Act
 		final var response = webTestClient.delete()
-			.uri("/%s/%s".formatted(INVALID_BUCKET, ID))
+			.uri("/objects/%s/%s".formatted(INVALID_BUCKET, ID))
 			.exchange()
 			.expectStatus().isBadRequest()
 			.expectBody(ConstraintViolationProblem.class)
@@ -278,7 +280,7 @@ class StorageResourceFailureTest {
 	void deleteObjectWithInvalidId() {
 		// Act
 		final var response = webTestClient.delete()
-			.uri("/%s/%s".formatted(BUCKET, INVALID_ID))
+			.uri("/objects/%s/%s".formatted(BUCKET, INVALID_ID))
 			.exchange()
 			.expectStatus().isBadRequest()
 			.expectBody(ConstraintViolationProblem.class)
