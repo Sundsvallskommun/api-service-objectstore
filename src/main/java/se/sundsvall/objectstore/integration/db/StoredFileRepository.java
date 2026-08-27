@@ -113,12 +113,13 @@ public interface StoredFileRepository extends JpaRepository<StoredFileEntity, St
 
 	/**
 	 * Deletes every object whose expiry has passed, in one statement. Selecting the expired objects first would load the
-	 * content of every one of them into memory only to throw it away.
+	 * content of every one of them into memory only to throw it away. An expiry that has been reached counts as passed,
+	 * so that the objects this removes are exactly the ones reads and listings have stopped returning.
 	 *
 	 * @param  timestamp the point in time to compare the expiry against
 	 * @return           the number of deleted objects
 	 */
 	@Modifying
-	@Query("delete from StoredFileEntity entity where entity.expiresAt is not null and entity.expiresAt < :timestamp")
+	@Query("delete from StoredFileEntity entity where entity.expiresAt is not null and entity.expiresAt <= :timestamp")
 	int deleteExpired(@Param("timestamp") OffsetDateTime timestamp);
 }

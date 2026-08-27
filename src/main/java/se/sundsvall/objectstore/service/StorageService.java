@@ -8,7 +8,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
-import java.util.Locale;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -44,6 +44,7 @@ import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 import static org.springframework.http.HttpStatus.PRECONDITION_FAILED;
 import static org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE;
+import static se.sundsvall.dept44.util.LogUtils.sanitizeForLogging;
 import static se.sundsvall.objectstore.service.mapper.StoredFileMapper.toFileMetadata;
 import static se.sundsvall.objectstore.service.mapper.StoredFileMapper.toObjectListing;
 import static se.sundsvall.objectstore.service.mapper.StoredFileMapper.toStoredFileEntity;
@@ -160,7 +161,9 @@ public class StorageService {
 			return toFileMetadata(createExclusively(entity, timestamp));
 		}
 
-		return toFileMetadata(storedFileRepository.save(entity));
+		storedFileRepository.store(entity);
+
+		return toFileMetadata(entity);
 	}
 
 	/**
@@ -196,7 +199,7 @@ public class StorageService {
 
 			response.getOutputStream().write(content);
 		} catch (final IOException e) {
-			LOG.warn("Failed to write content of object with id [{}] in bucket [{}]", canonicalId, bucket, e);
+			LOG.warn("Failed to write content of object with id [{}] in bucket [{}]", sanitizeForLogging(canonicalId), sanitizeForLogging(bucket), e);
 			throw Problem.valueOf(INTERNAL_SERVER_ERROR, ERROR_READ_CONTENT.formatted(canonicalId, bucket));
 		}
 	}
@@ -268,15 +271,19 @@ public class StorageService {
 	}
 
 	/**
-	 * Canonicalizes the id an object is addressed by. A UUID carries no case, so an id that differs only in case from one
-	 * already stored names the same object and is lowercased to say so. Without it the two would be separate objects, and
-	 * the object a client stored under an uppercase id would be invisible to a read that spelled the id in lowercase.
+	 * Canonicalizes the id an object is addressed by. A UUID is a value rather than a string, so two spellings of the same
+	 * value name the same object and are stored under one id to say so. Case is one such spelling; the other is the
+	 * abbreviated form the parser accepts, which leaves the leading zeros of a group out — 0-0-0-0-0 is the nil UUID.
+	 * Without this the spellings would be separate objects, and the object a client stored under one would be invisible to
+	 * a read that spelled the id the other way.
+	 * <p>
+	 * The id has already been validated as a UUID by the time it reaches the service, so the parse here cannot fail.
 	 *
 	 * @param  id the id sent by the client
 	 * @return    the id the object is stored under
 	 */
 	private static String toCanonicalId(final String id) {
-		return id.toLowerCase(Locale.ROOT);
+		return UUID.fromString(id).toString();
 	}
 
 	/**
@@ -330,9 +337,17 @@ public class StorageService {
 			.orElseThrow(() -> Problem.valueOf(NOT_FOUND, ERROR_NOT_FOUND.formatted(id, bucket)));
 	}
 
+	/**
+	 * Answers whether an object has expired. An expiry that has been reached counts as passed, matching the queries that
+	 * decide the same thing in the database — an object is visible while its expiry is still ahead of the current time,
+	 * and expired from the instant it is not.
+	 *
+	 * @param  summary the metadata of the object
+	 * @return         whether the object has expired
+	 */
 	private boolean isExpired(final StoredFileSummary summary) {
 		return ofNullable(summary.expiresAt())
-			.map(expiry -> expiry.isBefore(now(clock)))
+			.map(expiry -> !expiry.isAfter(now(clock)))
 			.orElse(false);
 	}
 
@@ -362,7 +377,7 @@ public class StorageService {
 		try {
 			content = request.getInputStream().readNBytes(toIntExact(min(maxBytes + 1, MAX_ARRAY_LENGTH)));
 		} catch (final IOException e) {
-			LOG.warn("Failed to read the content of an upload to bucket [{}]", request.getRequestURI(), e);
+			LOG.warn("Failed to read the content of an upload to bucket [{}]", sanitizeForLogging(request.getRequestURI()), e);
 			throw Problem.valueOf(BAD_REQUEST, ERROR_READ_UPLOAD);
 		}
 
@@ -435,7 +450,7 @@ public class StorageService {
 		try {
 			return ContentDisposition.parse(contentDisposition).getFilename();
 		} catch (final IllegalArgumentException e) {
-			LOG.info("Ignoring malformed Content-Disposition header [{}]", contentDisposition);
+			LOG.info("Ignoring malformed Content-Disposition header [{}]", sanitizeForLogging(contentDisposition));
 			return null;
 		}
 	}

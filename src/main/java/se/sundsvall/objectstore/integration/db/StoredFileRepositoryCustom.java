@@ -19,4 +19,14 @@ public interface StoredFileRepositoryCustom {
 	 * @throws DataIntegrityViolationException when the bucket already holds an object under the id
 	 */
 	void createExclusively(StoredFileEntity entity, OffsetDateTime timestamp);
+
+	/**
+	 * Stores an object, replacing whatever the bucket already holds under the same id. Written as a single upsert rather
+	 * than left to the save of the repository, which decides between an insert and an update by loading the row first —
+	 * and the row carries the content of the object being replaced, so the store of a large object read that content out
+	 * of the database only to overwrite it. Nothing else in the service loads an entity it does not intend to read.
+	 *
+	 * @param entity the object to store
+	 */
+	void store(StoredFileEntity entity);
 }

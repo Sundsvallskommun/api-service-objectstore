@@ -46,9 +46,10 @@ subset of S3 the consuming services need.
 - **The client chooses the object id, and it must be a UUID.** Storing is a `PUT` to the id, as it is in S3, and the id
   is what later reads and deletes address the object by. Requiring a UUID rather than a free-form S3 key is what keeps
   key validation out of the service entirely — a UUID has no path separators, no relative segments and a fixed length —
-  and a UUID is still a legal S3 key after a migration. A UUID carries no case, so the id is lowercased on the way in
-  and an id spelled in another case addresses the object already stored rather than a second one; the metadata that
-  comes back carries the id the object is stored under. The name of the uploaded file is stored alongside it as
+  and a UUID is still a legal S3 key after a migration. A UUID is a value rather than a string, so the id is
+  canonicalized on the way in and any spelling of that value addresses the object already stored rather than a second
+  one — another case, or a group with its leading zeros left out, which the parser accepts. The metadata that comes
+  back carries the id the object is stored under. The name of the uploaded file is stored alongside it as
   metadata and echoed back in the `Content-Disposition` header of a read, but it never identifies the object.
 - **Storing to an id that already holds an object replaces it**, as it does in S3. There is no `409`. This is what makes
   a store idempotent: a client that retries one it never saw the response to ends up with exactly one object rather

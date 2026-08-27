@@ -59,6 +59,13 @@ class StorageServiceTest {
 
 	private static final String BUCKET = "attachments";
 	private static final String ID = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b";
+
+	/**
+	 * A UUID whose groups carry leading zeros, together with the abbreviated spelling of the same value — the parser
+	 * accepts a group with its leading zeros left out, so the two name one object rather than two.
+	 */
+	private static final String PADDED_ID = "0d1b2d33-0b0c-0a10-0a1a-00009e1f6f2b";
+	private static final String UNPADDED_ID = "d1b2d33-b0c-a10-a1a-9e1f6f2b";
 	private static final String FILE_NAME = "invoice-123.pdf";
 	private static final String DISPOSITION = "attachment; filename=\"invoice-123.pdf\"";
 	private static final byte[] CONTENT = "file-content".getBytes(UTF_8);
@@ -108,13 +115,11 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
 		// Act
 		final var result = service.store(BUCKET, ID, "application/pdf", DISPOSITION, null, null, requestWith(CONTENT));
 
 		// Assert
-		verify(storedFileRepositoryMock).save(entityCaptor.capture());
+		verify(storedFileRepositoryMock).store(entityCaptor.capture());
 		final var captured = entityCaptor.getValue();
 		assertThat(captured.getId()).isEqualTo(ID);
 		assertThat(captured.getBucket()).isEqualTo(BUCKET);
@@ -137,8 +142,6 @@ class StorageServiceTest {
 		final var service = serviceWith(Duration.ofDays(7));
 		final var expiresAt = NOW.plusHours(2);
 
-		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
 		// Act
 		final var result = service.store(BUCKET, ID, "application/pdf", DISPOSITION, null, expiresAt, requestWith(CONTENT));
 
@@ -150,8 +153,6 @@ class StorageServiceTest {
 	void storeWithoutConfiguredTimeToLive() {
 		// Arrange
 		final var service = serviceWith(null);
-
-		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
 		final var result = service.store(BUCKET, ID, "application/pdf", DISPOSITION, null, null, requestWith(CONTENT));
@@ -171,13 +172,11 @@ class StorageServiceTest {
 		final var service = serviceWith(Duration.ofDays(7));
 		final var replacement = "replacement".getBytes(UTF_8);
 
-		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
 		// Act
 		final var result = service.store(BUCKET, ID, "text/plain", "attachment; filename=\"replacement.txt\"", null, null, requestWith(replacement));
 
 		// Assert
-		verify(storedFileRepositoryMock).save(entityCaptor.capture());
+		verify(storedFileRepositoryMock).store(entityCaptor.capture());
 		assertThat(entityCaptor.getValue().getId()).isEqualTo(ID);
 		assertThat(result.getId()).isEqualTo(ID);
 		assertThat(result.getFileName()).isEqualTo("replacement.txt");
@@ -226,7 +225,7 @@ class StorageServiceTest {
 		assertThat(result.getEtag()).isEqualTo(ETAG_VALUE);
 		verify(storedFileRepositoryMock).createExclusively(entityCaptor.capture(), any());
 		assertThat(entityCaptor.getValue().getContent()).isEqualTo(CONTENT);
-		verify(storedFileRepositoryMock, never()).save(any(StoredFileEntity.class));
+		verify(storedFileRepositoryMock, never()).store(any(StoredFileEntity.class));
 	}
 
 	/**
@@ -248,7 +247,7 @@ class StorageServiceTest {
 			.hasMessageContaining("An object with id [%s] already exists in bucket [%s]".formatted(ID, BUCKET))
 			.extracting("status").isEqualTo(PRECONDITION_FAILED);
 
-		verify(storedFileRepositoryMock, never()).save(any(StoredFileEntity.class));
+		verify(storedFileRepositoryMock, never()).store(any(StoredFileEntity.class));
 	}
 
 	/**
@@ -280,8 +279,6 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
 		// Act
 		final var result = service.store(BUCKET, ID, null, contentDisposition, null, null, requestWith(CONTENT));
 
@@ -311,8 +308,6 @@ class StorageServiceTest {
 	void storeTruncatesLongFileName() {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
-
-		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
 		final var result = service.store(BUCKET, ID, null, "attachment; filename=\"%s\"".formatted("a".repeat(300)), null, null, requestWith(CONTENT));
@@ -476,13 +471,19 @@ class StorageServiceTest {
 			.extracting("status").isEqualTo(NOT_FOUND);
 	}
 
-	@Test
-	void readToWhenExpired() {
+	/**
+	 * An expiry that has been reached counts as passed, matching the queries that decide the same thing in the database —
+	 * an object reads as gone from the instant its expiry is no longer ahead of the current time, rather than a moment
+	 * later than the listing stopped returning it.
+	 */
+	@ParameterizedTest
+	@MethodSource("expiredArguments")
+	void readToWhenExpired(final OffsetDateTime expiresAt) {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
 
-		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, FILE_NAME, "application/pdf", NOW.minusSeconds(1))));
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, FILE_NAME, "application/pdf", expiresAt)));
 
 		// Act & Assert
 		assertThatThrownBy(() -> service.readTo(BUCKET, ID, null, response))
@@ -490,6 +491,32 @@ class StorageServiceTest {
 			.extracting("status").isEqualTo(NOT_FOUND);
 
 		verify(storedFileRepositoryMock, never()).findContent(any(), any());
+	}
+
+	private static Stream<Arguments> expiredArguments() {
+		return Stream.of(
+			Arguments.of(NOW.minusSeconds(1)),
+			Arguments.of(NOW));
+	}
+
+	/**
+	 * The other side of the same boundary — an expiry still ahead of the current time leaves the object readable, which
+	 * is what keeps the comparison from reading every object with an expiry as gone.
+	 */
+	@Test
+	void readToWhenNotYetExpired() {
+		// Arrange
+		final var service = serviceWith(Duration.ofDays(7));
+		final var response = new MockHttpServletResponse();
+
+		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID, FILE_NAME, "application/pdf", NOW.plusSeconds(1))));
+		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);
+
+		// Act
+		service.readTo(BUCKET, ID, null, response);
+
+		// Assert
+		assertThat(response.getContentAsByteArray()).isEqualTo(CONTENT);
 	}
 
 	/**
@@ -554,11 +581,11 @@ class StorageServiceTest {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(storedFileRepositoryMock.findPage(eq(BUCKET), eq("a"), any(), eq(Limit.of(3))))
+		when(storedFileRepositoryMock.findPage(eq(BUCKET), eq(ID), any(), eq(Limit.of(3))))
 			.thenReturn(List.of(summary("b"), summary("c"), summary("d")));
 
 		// Act
-		final var result = service.list(BUCKET, "a", 2);
+		final var result = service.list(BUCKET, ID, 2);
 
 		// Assert
 		assertThat(result.getObjects()).extracting("id").containsExactly("b", "c");
@@ -616,56 +643,67 @@ class StorageServiceTest {
 	}
 
 	/**
-	 * A UUID carries no case, so an id spelled in a different case names the object already stored rather than a second
-	 * one. The id is lowercased on the way in, and the metadata that comes back carries the id the object is stored
-	 * under rather than the one the client happened to type.
+	 * A UUID is a value rather than a string, so a spelling that differs from the one an object is stored under names
+	 * that object rather than a second one. The id is canonicalized on the way in, and the metadata that comes back
+	 * carries the id the object is stored under rather than the one the client happened to type.
 	 */
-	@Test
-	void storeCanonicalizesTheId() {
+	@ParameterizedTest
+	@MethodSource("nonCanonicalIdArguments")
+	void storeCanonicalizesTheId(final String spelling, final String canonicalId) {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
 		// Act
-		final var result = service.store(BUCKET, ID.toUpperCase(Locale.ROOT), "application/pdf", DISPOSITION, null, null, requestWith(CONTENT));
+		final var result = service.store(BUCKET, spelling, "application/pdf", DISPOSITION, null, null, requestWith(CONTENT));
 
 		// Assert
-		verify(storedFileRepositoryMock).save(entityCaptor.capture());
-		assertThat(entityCaptor.getValue().getId()).isEqualTo(ID);
-		assertThat(result.getId()).isEqualTo(ID);
+		verify(storedFileRepositoryMock).store(entityCaptor.capture());
+		assertThat(entityCaptor.getValue().getId()).isEqualTo(canonicalId);
+		assertThat(result.getId()).isEqualTo(canonicalId);
 	}
 
-	@Test
-	void readToCanonicalizesTheId() {
+	/**
+	 * The spellings a client may send of an id already stored, paired with the id the object is stored under: the same
+	 * value in another case, and the same value with the leading zeros of each group left out.
+	 */
+	private static Stream<Arguments> nonCanonicalIdArguments() {
+		return Stream.of(
+			Arguments.of(ID.toUpperCase(Locale.ROOT), ID),
+			Arguments.of(UNPADDED_ID, PADDED_ID));
+	}
+
+	@ParameterizedTest
+	@MethodSource("nonCanonicalIdArguments")
+	void readToCanonicalizesTheId(final String spelling, final String canonicalId) {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 		final var response = new MockHttpServletResponse();
 
-		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID)));
-		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);
+		when(storedFileRepositoryMock.findSummary(BUCKET, canonicalId)).thenReturn(Optional.of(summary(canonicalId)));
+		when(storedFileRepositoryMock.findContent(BUCKET, canonicalId)).thenReturn(CONTENT);
 
 		// Act
-		service.readTo(BUCKET, ID.toUpperCase(Locale.ROOT), null, response);
+		service.readTo(BUCKET, spelling, null, response);
 
 		// Assert
 		assertThat(response.getContentAsByteArray()).isEqualTo(CONTENT);
-		verify(storedFileRepositoryMock).findSummary(BUCKET, ID);
-		verify(storedFileRepositoryMock).findContent(BUCKET, ID);
+		verify(storedFileRepositoryMock).findSummary(BUCKET, canonicalId);
+		verify(storedFileRepositoryMock).findContent(BUCKET, canonicalId);
 	}
 
-	@Test
-	void deleteCanonicalizesTheId() {
+	@ParameterizedTest
+	@MethodSource("nonCanonicalIdArguments")
+	void deleteCanonicalizesTheId(final String spelling, final String canonicalId) {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(storedFileRepositoryMock.deleteByBucketAndId(BUCKET, ID)).thenReturn(1);
+		when(storedFileRepositoryMock.deleteByBucketAndId(BUCKET, canonicalId)).thenReturn(1);
 
 		// Act
-		service.delete(BUCKET, ID.toUpperCase(Locale.ROOT));
+		service.delete(BUCKET, spelling);
 
 		// Assert
-		verify(storedFileRepositoryMock).deleteByBucketAndId(BUCKET, ID);
+		verify(storedFileRepositoryMock).deleteByBucketAndId(BUCKET, canonicalId);
 		verifyNoMoreInteractions(storedFileRepositoryMock);
 	}
 
@@ -673,18 +711,19 @@ class StorageServiceTest {
 	 * The token is an id of the page before it, so it is canonicalized the same way — otherwise a page fetched with the
 	 * token spelled in another case would start somewhere else in the bucket.
 	 */
-	@Test
-	void listCanonicalizesTheContinuationToken() {
+	@ParameterizedTest
+	@MethodSource("nonCanonicalIdArguments")
+	void listCanonicalizesTheContinuationToken(final String spelling, final String canonicalId) {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
 
-		when(storedFileRepositoryMock.findPage(eq(BUCKET), eq(ID), any(), any())).thenReturn(List.of());
+		when(storedFileRepositoryMock.findPage(eq(BUCKET), eq(canonicalId), any(), any())).thenReturn(List.of());
 
 		// Act
-		service.list(BUCKET, ID.toUpperCase(Locale.ROOT), 10);
+		service.list(BUCKET, spelling, 10);
 
 		// Assert
-		verify(storedFileRepositoryMock).findPage(eq(BUCKET), eq(ID), any(), any());
+		verify(storedFileRepositoryMock).findPage(eq(BUCKET), eq(canonicalId), any(), any());
 	}
 
 	/**
@@ -726,8 +765,6 @@ class StorageServiceTest {
 	void storeWithoutContentType(final String contentType) {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
-
-		when(storedFileRepositoryMock.save(any(StoredFileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		// Act
 		final var result = service.store(BUCKET, ID, contentType, DISPOSITION, null, null, requestWith(CONTENT));

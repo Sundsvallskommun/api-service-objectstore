@@ -299,9 +299,10 @@ class StorageIT extends AbstractAppTest {
 	}
 
 	/**
-	 * The circuit breaker guards the methods declared on the repository interface, and a method inherited from
-	 * JpaRepository is declared elsewhere — which once left every write unguarded while every read was guarded. This
-	 * fails if the redeclaration of save that brings it back inside the annotated type is ever removed.
+	 * The circuit breaker guards the methods declared on the repository interfaces, and a method inherited from
+	 * JpaRepository is declared elsewhere — which once left every write unguarded while every read was guarded. A store
+	 * goes through the upsert declared on the custom interface, which is annotated, and this fails if the write ever
+	 * moves back to an inherited method.
 	 */
 	@Test
 	void test16_storeIsGuardedByTheCircuitBreaker() {
