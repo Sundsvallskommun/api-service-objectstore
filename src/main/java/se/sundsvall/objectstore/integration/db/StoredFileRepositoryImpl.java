@@ -22,8 +22,6 @@ class StoredFileRepositoryImpl implements StoredFileRepositoryCustom {
 		and entity.expiresAt is not null
 		and entity.expiresAt <= :timestamp
 		""";
-	
-	
 
 	/**
 	 * Stores an object and replaces the one already stored under its id in a single statement, leaving the choice between
