@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.tuple;
 class StoredFileMapperTest {
 
 	private static final String ID = "d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b";
-	private static final String ETAG = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+	private static final String ETAG = "ed7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec9f73";
 	private static final OffsetDateTime TIMESTAMP = OffsetDateTime.parse("2026-08-20T12:00:00Z");
 	private static final OffsetDateTime CREATED = TIMESTAMP.minusDays(1);
 	private static final OffsetDateTime EXPIRES_AT = TIMESTAMP.plusDays(7);
@@ -37,7 +37,7 @@ class StoredFileMapperTest {
 		final var content = content();
 
 		// Act
-		final var result = StoredFileMapper.toStoredFileEntity("attachments", ID, "invoice.pdf", "application/pdf", 1024L, ETAG, content, CREATED, EXPIRES_AT);
+		final var result = StoredFileMapper.toStoredFileEntity("attachments", ID, "invoice.pdf", "application/pdf", content, CREATED, EXPIRES_AT);
 
 		// Assert
 		assertThat(result).hasNoNullFieldsOrProperties();
@@ -45,7 +45,7 @@ class StoredFileMapperTest {
 		assertThat(result.getBucket()).isEqualTo("attachments");
 		assertThat(result.getFileName()).isEqualTo("invoice.pdf");
 		assertThat(result.getContentType()).isEqualTo("application/pdf");
-		assertThat(result.getSizeInBytes()).isEqualTo(1024L);
+		assertThat(result.getSizeInBytes()).isEqualTo(content.length);
 		assertThat(result.getEtag()).isEqualTo(ETAG);
 		assertThat(result.getContent()).isEqualTo(content);
 		assertThat(result.getCreated()).isEqualTo(CREATED);

@@ -3,11 +3,8 @@ package se.sundsvall.objectstore.service;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.util.HexFormat;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,10 +58,7 @@ public class StorageService {
 	private static final String ERROR_TOO_LARGE = "Content of the uploaded file exceeds the maximum size of %d bytes";
 	private static final String ERROR_READ_UPLOAD = "Could not read the content of the uploaded file";
 	private static final String ERROR_READ_CONTENT = "Could not read content of object with id [%s] in bucket [%s]";
-	private static final String ERROR_DIGEST = "Could not compute the digest of the uploaded file";
 	private static final String ERROR_INVALID_CONTENT_TYPE = "Content-Type is not a media type that can be stored";
-
-	private static final String DIGEST_ALGORITHM = "SHA-256";
 
 	/**
 	 * The only If-None-Match a store accepts, matching S3, where the wildcard is what turns a store into a create-only
@@ -154,8 +148,8 @@ public class StorageService {
 			throw Problem.valueOf(BAD_REQUEST, ERROR_EMPTY_CONTENT);
 		}
 
-		final var entity = toStoredFileEntity(bucket, canonicalId, toFileName(contentDisposition), storedContentType, (long) content.length,
-			toEtag(content), content, timestamp, toExpiry(expiresAt, timestamp));
+		final var entity = toStoredFileEntity(bucket, canonicalId, toFileName(contentDisposition), storedContentType, content, timestamp,
+			toExpiry(expiresAt, timestamp));
 
 		if (createOnly) {
 			return toFileMetadata(createExclusively(entity, timestamp));
@@ -386,15 +380,6 @@ public class StorageService {
 		}
 
 		return content;
-	}
-
-	private static String toEtag(final byte[] content) {
-		try {
-			return HexFormat.of().formatHex(MessageDigest.getInstance(DIGEST_ALGORITHM).digest(content));
-		} catch (final NoSuchAlgorithmException e) {
-			LOG.error("The [{}] digest algorithm is not available", DIGEST_ALGORITHM, e);
-			throw Problem.valueOf(INTERNAL_SERVER_ERROR, ERROR_DIGEST);
-		}
 	}
 
 	/**
