@@ -1,5 +1,6 @@
 package se.sundsvall.objectstore.integration.db.model;
 
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.Objects;
 
@@ -9,6 +10,9 @@ import java.util.Objects;
  * stored in any number of buckets without the objects having anything to do with one another.
  */
 public class StoredFileId implements Serializable {
+
+	@Serial
+	private static final long serialVersionUID = 225612928519743399L;
 
 	private String bucket;
 
