@@ -52,8 +52,9 @@ class StoredFileIdTest {
 		final var other = StoredFileId.create().withBucket("archive").withId(id);
 
 		// Assert
-		assertThat(one).isNotEqualTo(other);
-		assertThat(one).isEqualTo(StoredFileId.create().withBucket("attachments").withId(id));
+		assertThat(one)
+			.isNotEqualTo(other)
+			.isEqualTo(StoredFileId.create().withBucket("attachments").withId(id));
 	}
 
 	@Test

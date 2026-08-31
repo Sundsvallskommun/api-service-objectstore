@@ -59,7 +59,7 @@ public interface StoredFileRepository extends JpaRepository<StoredFileEntity, St
 	 */
 	@Query("""
 		select new se.sundsvall.objectstore.integration.db.model.StoredFileSummary(
-			entity.id, entity.bucket, entity.fileName, entity.contentType, entity.sizeInBytes, entity.etag, entity.created, entity.expiresAt)
+		entity.id, entity.bucket, entity.fileName, entity.contentType, entity.sizeInBytes, entity.etag, entity.created, entity.expiresAt)
 		from StoredFileEntity entity
 		where entity.bucket = :bucket
 		and entity.id = :id
@@ -89,7 +89,7 @@ public interface StoredFileRepository extends JpaRepository<StoredFileEntity, St
 	 */
 	@Query("""
 		select new se.sundsvall.objectstore.integration.db.model.StoredFileSummary(
-			entity.id, entity.bucket, entity.fileName, entity.contentType, entity.sizeInBytes, entity.etag, entity.created, entity.expiresAt)
+		entity.id, entity.bucket, entity.fileName, entity.contentType, entity.sizeInBytes, entity.etag, entity.created, entity.expiresAt)
 		from StoredFileEntity entity
 		where entity.bucket = :bucket
 		and entity.id > :continuationToken

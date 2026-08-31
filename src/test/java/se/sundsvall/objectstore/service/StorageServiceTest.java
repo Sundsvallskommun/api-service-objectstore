@@ -21,7 +21,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Limit;
@@ -40,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -543,7 +543,7 @@ class StorageServiceTest {
 	void readToWhenContentCannotBeWritten() throws Exception {
 		// Arrange
 		final var service = serviceWith(Duration.ofDays(7));
-		final var response = Mockito.mock(HttpServletResponse.class);
+		final var response = mock(HttpServletResponse.class);
 
 		when(storedFileRepositoryMock.findSummary(BUCKET, ID)).thenReturn(Optional.of(summary(ID)));
 		when(storedFileRepositoryMock.findContent(BUCKET, ID)).thenReturn(CONTENT);

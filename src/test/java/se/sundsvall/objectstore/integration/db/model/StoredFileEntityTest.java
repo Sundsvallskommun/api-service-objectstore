@@ -68,8 +68,9 @@ class StoredFileEntityTest {
 			.withEtag("other").withContent("other".getBytes(UTF_8));
 
 		// Assert
-		assertThat(one).isEqualTo(other).hasSameHashCodeAs(other);
-		assertThat(one).isNotEqualTo(StoredFileEntity.create().withBucket("archive").withId("0e2b7b3a-2a3e-4b7e-9c37-5f5e1a6b3e10"));
+		assertThat(one).isEqualTo(other)
+			.hasSameHashCodeAs(other)
+			.isNotEqualTo(StoredFileEntity.create().withBucket("archive").withId("0e2b7b3a-2a3e-4b7e-9c37-5f5e1a6b3e10"));
 	}
 
 	@Test

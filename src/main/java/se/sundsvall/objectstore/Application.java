@@ -8,7 +8,7 @@ import static org.springframework.boot.SpringApplication.run;
 @ServiceApplication
 @ExcludeFromJacocoGeneratedCoverageReport
 public class Application {
-	static void main(final String... args) {
+	public static void main(String[] args) {
 		run(Application.class, args);
 	}
 }
