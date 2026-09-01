@@ -1,0 +1,450 @@
+openapi: 3.1.0
+info:
+  title: objectstore
+  contact: {}
+  license:
+    name: MIT License
+    url: https://opensource.org/licenses/MIT
+  version: "1.0"
+servers:
+- url: http://localhost:53260
+  description: Generated server url
+tags:
+- name: Storage
+  description: Storage of objects
+paths:
+  /objects/{bucket}/{id}:
+    get:
+      tags:
+      - Storage
+      summary: Read an object
+      description: The content is returned as the raw response body. A request whose
+        If-None-Match matches the ETag of the object is answered with a bare 304.
+      operationId: readObject
+      parameters:
+      - name: bucket
+        in: path
+        description: Bucket name
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+        example: attachments
+      - name: id
+        in: path
+        description: Object id
+        required: true
+        schema:
+          type: string
+        example: d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b
+      - name: If-None-Match
+        in: header
+        description: Entity tag the client already holds
+        required: false
+        schema:
+          type: string
+        example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+      responses:
+        "200":
+          description: Successful operation
+          headers:
+            ETag:
+              style: simple
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: Not modified
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "400":
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                oneOf:
+                - $ref: "#/components/schemas/Problem"
+                - $ref: "#/components/schemas/ConstraintViolationProblem"
+        "500":
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    put:
+      tags:
+      - Storage
+      summary: Store an object
+      description: "The content is sent as the raw request body and its media type\
+        \ is stored and replayed on reads. Any media type is accepted — the ones listed\
+        \ here are only what the documentation offers to pick from. Buckets are implicit\
+        \ — storing the first object in a bucket creates it. Storing to an id that\
+        \ already holds an object replaces it, as it does in S3, which is what makes\
+        \ a retried store safe. A client that wants the opposite sends If-None-Match\
+        \ with a wildcard and gets a 412 instead of an overwrite."
+      operationId: storeObject
+      parameters:
+      - name: bucket
+        in: path
+        description: Bucket name
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+        example: attachments
+      - name: id
+        in: path
+        description: "Object id, chosen by the client"
+        required: true
+        schema:
+          type: string
+        example: d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b
+      - name: Content-Disposition
+        in: header
+        description: The name of the file is taken from the filename parameter of
+          this header
+        required: false
+        schema:
+          type: string
+        example: attachment; filename="invoice-123.pdf"
+      - name: If-None-Match
+        in: header
+        description: Send a wildcard to refuse the store with a 412 rather than overwrite
+          an object already held under the id. No other value is accepted.
+        required: false
+        schema:
+          type: string
+        example: '*'
+      - name: expiresAt
+        in: query
+        description: Point in time when the object expires. Must be in the future.
+          Defaults to the configured time to live.
+        required: false
+        schema:
+          type: string
+          format: date-time
+        example: 2026-08-25T14:30:00+02:00
+      requestBody:
+        description: The content of the object
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+          text/plain:
+            schema:
+              type: string
+              format: binary
+        required: true
+      responses:
+        "200":
+          description: Successful operation
+          headers:
+            ETag:
+              style: simple
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileMetadata"
+        "412":
+          description: Precondition failed
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "413":
+          description: Payload too large
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "400":
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                oneOf:
+                - $ref: "#/components/schemas/Problem"
+                - $ref: "#/components/schemas/ConstraintViolationProblem"
+        "500":
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    delete:
+      tags:
+      - Storage
+      summary: Delete an object
+      description: Deletion is idempotent — deleting an object that does not exist
+        is not an error.
+      operationId: deleteObject
+      parameters:
+      - name: bucket
+        in: path
+        description: Bucket name
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+        example: attachments
+      - name: id
+        in: path
+        description: Object id
+        required: true
+        schema:
+          type: string
+        example: d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b
+      responses:
+        "204":
+          description: Successful operation
+        "400":
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                oneOf:
+                - $ref: "#/components/schemas/Problem"
+                - $ref: "#/components/schemas/ConstraintViolationProblem"
+        "500":
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /objects/{bucket}:
+    get:
+      tags:
+      - Storage
+      summary: List the objects in a bucket
+      description: "Objects are returned ordered by id, a page at a time. A truncated\
+        \ listing carries the token to pass as continuationToken to fetch the next\
+        \ page."
+      operationId: listObjects
+      parameters:
+      - name: bucket
+        in: path
+        description: Bucket name
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+        example: attachments
+      - name: continuationToken
+        in: query
+        description: Token returned by the previous page. Omit to start from the beginning.
+        required: false
+        schema:
+          type: string
+        example: d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b
+      - name: maxKeys
+        in: query
+        description: Maximum number of objects to return
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 1000
+          maximum: 1000
+          minimum: 1
+        example: 1000
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectListing"
+        "400":
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                oneOf:
+                - $ref: "#/components/schemas/Problem"
+                - $ref: "#/components/schemas/ConstraintViolationProblem"
+        "500":
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api-docs:
+    get:
+      tags:
+      - API
+      summary: OpenAPI
+      operationId: getApiDocs
+      responses:
+        "200":
+          description: OK
+          content:
+            application/yaml:
+              schema:
+                type: string
+      x-auth-type: None
+      x-throttling-tier: Unlimited
+      x-wso2-mutual-ssl: Optional
+components:
+  schemas:
+    Problem:
+      type: object
+      properties:
+        title:
+          type: string
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri
+        type:
+          type: string
+          format: uri
+        status:
+          type: integer
+          format: int32
+    ConstraintViolationProblem:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+        status:
+          type: integer
+          format: int32
+        violations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Violation"
+        title:
+          type: string
+        detail:
+          type: string
+        causeAsProblem:
+          $ref: "#/components/schemas/ThrowableProblem"
+        instance:
+          type: string
+          format: uri
+    ThrowableProblem:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri
+        causeAsProblem: {}
+    Violation:
+      type: object
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    FileMetadata:
+      type: object
+      description: Metadata for a stored object
+      properties:
+        id:
+          type: string
+          description: Id identifying the object within the bucket
+          examples:
+          - d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b
+          readOnly: true
+        bucket:
+          type: string
+          description: Bucket holding the object
+          examples:
+          - attachments
+          readOnly: true
+        fileName:
+          type: string
+          description: Name of the uploaded file
+          examples:
+          - invoice-123.pdf
+          readOnly: true
+        contentType:
+          type: string
+          description: Content type of the object
+          examples:
+          - application/pdf
+          readOnly: true
+        size:
+          type: integer
+          format: int64
+          description: Size of the object in bytes
+          examples:
+          - 20971
+          readOnly: true
+        etag:
+          type: string
+          description: "Hex encoded SHA-256 digest of the content, also returned in\
+            \ the ETag header"
+          examples:
+          - 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+          readOnly: true
+        created:
+          type: string
+          format: date-time
+          description: Timestamp when the object was stored
+          examples:
+          - 2026-08-18T14:30:00+02:00
+          readOnly: true
+        expiresAt:
+          type: string
+          format: date-time
+          description: Timestamp when the object expires and becomes eligible for
+            removal
+          examples:
+          - 2026-08-25T14:30:00+02:00
+          readOnly: true
+    ObjectListing:
+      type: object
+      description: A page of the objects in a bucket
+      properties:
+        objects:
+          type: array
+          description: "The objects in this page, ordered by id"
+          items:
+            $ref: "#/components/schemas/FileMetadata"
+          readOnly: true
+        truncated:
+          type: boolean
+          description: Whether more objects exist beyond this page
+          examples:
+          - false
+          readOnly: true
+        nextContinuationToken:
+          type: string
+          description: The token to pass as continuationToken to fetch the next page.
+            Null when the listing is not truncated.
+          examples:
+          - d1b2d33e-1b0c-4a10-9a1a-4a0e9e1f6f2b
+          readOnly: true
+  securitySchemes: {}

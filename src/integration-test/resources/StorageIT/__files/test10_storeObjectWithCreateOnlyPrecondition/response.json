@@ -1,0 +1,5 @@
+{
+	"title": "Precondition Failed",
+	"status": 412,
+	"detail": "An object with id [11111111-1111-1111-1111-111111111111] already exists in bucket [attachments]"
+}

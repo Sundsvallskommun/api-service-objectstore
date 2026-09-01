@@ -1,0 +1,4 @@
+INSERT INTO stored_file (id, bucket, file_name, content_type, size_in_bytes, etag, content, created, expires_at)
+VALUES ('11111111-1111-1111-1111-111111111111', 'attachments', 'existing.txt', 'text/plain', 24, 'c448faf851ca35959e15384db68a45027e8ab0bd19ba4e3fae4b649338a25fa2', 'integration-test-content', '2026-08-01 10:00:00.000000', '2099-01-01 00:00:00.000000'),
+       ('22222222-2222-2222-2222-222222222222', 'attachments', 'expired.txt', 'text/plain', 7, 'fa64ea1e82e1206f828ab2a02917c7e92accb98e3b95881a1b4ad52b914b66e3', 'expired', '2026-08-01 11:00:00.000000', '2026-08-02 00:00:00.000000'),
+       ('33333333-3333-3333-3333-333333333333', 'attachments', 'removable.txt', 'text/plain', 9, '30190ac54aa41e27a2550b5ada5ee16a16ec53d27fc9d6c061c3c6fd5d98df78', 'removable', '2026-08-01 12:00:00.000000', null);
