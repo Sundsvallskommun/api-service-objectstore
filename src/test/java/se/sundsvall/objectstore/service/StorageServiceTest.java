@@ -791,6 +791,6 @@ class StorageServiceTest {
 
 		// Assert
 		assertThat(response.getHeader(CONTENT_DISPOSITION))
-			.isEqualTo("attachment; filename=\"räkning-_.pdf\"; filename*=UTF-8''r%C3%A4kning-%E2%82%AC.pdf");
+			.isEqualTo("attachment; filename=\"raekning-_.pdf\"; filename*=UTF-8''r%C3%A4kning-%E2%82%AC.pdf");
 	}
 }
